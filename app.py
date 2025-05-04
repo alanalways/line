@@ -24,7 +24,7 @@ channel_secret = os.getenv('LINE_CHANNEL_SECRET')
 grok_api_key = os.getenv('GROK_API_KEY')
 DATABASE_URL = os.getenv('DATABASE_URL')
 
-# 驗證環境變數並記錄 API Key 資訊（不洩漏完整 Key）
+# 驗證環境變數並記錄 API Key 資訊
 if not all([channel_access_token, channel_secret, grok_api_key]):
     app.logger.error("錯誤：LINE Token 或 Groq API Key 未設定！")
     exit()
@@ -51,6 +51,18 @@ try:
         api_key=grok_api_key,
         http_client=custom_http_client
     )
+    # 測試 API Key 是否有效
+    try:
+        test_response = groq_client.chat.completions.create(
+            messages=[{"role": "user", "content": "test"}],
+            model="grok-3-mini-beta",
+            max_tokens=10
+        )
+        app.logger.info("Grok API Key 測試成功，回應: {}".format(test_response.choices[0].message.content[:50]))
+    except AuthenticationError as e:
+        app.logger.error(f"Grok API Key 測試失敗: {e}", exc_info=True)
+    except Exception as e:
+        app.logger.error(f"Grok API Key 測試錯誤: {type(e).__name__}: {e}", exc_info=True)
     app.logger.info("Groq client 初始化成功。")
 except Exception as e:
     app.logger.error(f"無法初始化 Groq client: {e}", exc_info=True)
@@ -95,7 +107,7 @@ async def fetch_web_content(url):
         async with httpx.AsyncClient(verify=True, timeout=10.0) as client:
             response = await client.get(url)
             response.raise_for_status()
-            return response.text[:2000]  # 限制內容長度
+            return response.text[:2000]
     except Exception as e:
         app.logger.error(f"獲取網頁內容失敗: {e}")
         return f"無法獲取網頁內容：{str(e)}"
@@ -115,7 +127,6 @@ def process_and_push(user_id, event):
                     cur.execute("SELECT history FROM conversation_history WHERE user_id = %s;", (user_id,))
                     result = cur.fetchone()
                     if result and result[0]:
-                        # JSONB 欄位已由 psycopg2 自動解析為 Python 物件
                         app.logger.info(f"讀取原始歷史資料: {str(result[0])[:100]}...")
                         if isinstance(result[0], list):
                             history = result[0]
@@ -129,12 +140,10 @@ def process_and_push(user_id, event):
                 history = []
                 if conn and not conn.closed: conn.rollback()
 
-        # 檢查是否為網頁查詢請求
         web_content = None
         if user_text.startswith("查詢："):
             url = user_text[3:].strip()
             if url:
-                # 在新的事件迴圈中運行異步請求
                 try:
                     web_content = asyncio.run(fetch_web_content(url))
                 except Exception as e:
@@ -167,7 +176,7 @@ def process_and_push(user_id, event):
             grok_response = "AI 無法連線或請求超時，請稍後再試。"
             app.logger.error(f"Grok API 連線或超時錯誤: {e}")
         except AuthenticationError as e:
-            grok_response = "API 金鑰驗證失敗，請聯繫管理員。"
+            grok_response = "API 金鑰驗證失敗，請確認 API Key 是否正確設定。"
             app.logger.error(f"Grok API 認證錯誤: {e}", exc_info=True)
         except Exception as e:
             grok_response = "系統錯誤，請稍後再試。"
