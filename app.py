@@ -12,7 +12,7 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage
 from dotenv import load_dotenv
 from groq import Groq, Timeout, APIConnectionError, RateLimitError
 from threading import Thread
-import httpx # <--- 加入 httpx 導入
+import httpx # <--- 保持導入 httpx
 
 # --- 載入環境變數 ---
 load_dotenv()
@@ -43,28 +43,27 @@ except Exception as e:
     app.logger.error(f"無法初始化 Line Bot SDK: {e}")
     exit()
 
-# --- Groq Client 初始化 (手動配置 httpx) ---
+# --- Groq Client 初始化 (手動配置 httpx，移除 proxies 參數) ---
 try:
-    # 1. 手動建立一個 httpx AsyncClient，明確指定不使用代理
-    #    Groq SDK 內部似乎使用異步客戶端，所以我們用 AsyncClient
+    # 1. 手動建立一個 httpx AsyncClient，不傳遞 proxies 參數
+    #    讓 httpx 使用預設的代理處理方式 (讀取環境變數等)
     custom_http_client = httpx.AsyncClient(
-        proxies=None, # <--- 明確設定 proxies 為 None
-        verify=True,  # <--- 啟用 SSL 驗證 (通常是預設且推薦)
-        timeout=httpx.Timeout(60.0, connect=10.0) # 設定超時 (60秒讀取, 10秒連接)
+        # proxies=None, # <--- 移除這一行錯誤的參數！
+        verify=True,
+        timeout=httpx.Timeout(60.0, connect=10.0)
     )
-    app.logger.info("已手動建立 httpx.AsyncClient (proxies=None)。")
+    app.logger.info("已手動建立 httpx.AsyncClient (使用預設代理處理)。")
 
-    # 2. 將這個自訂的客戶端傳遞給 Groq 初始化
+    # 2. 將這個客戶端傳遞給 Groq 初始化
     groq_client = Groq(
         api_key=grok_api_key,
-        http_client=custom_http_client # <--- 關鍵：傳入自訂的 http_client
+        http_client=custom_http_client
     )
     app.logger.info("Groq client 使用自訂 http_client 初始化成功。")
 
 except Exception as e:
-    # 使用 exc_info=True 記錄更詳細的錯誤堆疊
     app.logger.error(f"無法初始化 Groq client: {e}", exc_info=True)
-    exit() # 初始化失敗則退出
+    exit()
 
 # 對話記憶設定 (不變)
 MAX_HISTORY_TURNS = 5
@@ -149,8 +148,7 @@ def process_and_push(user_id, event):
                 model="grok-3-mini-beta",
                 temperature=0.7,
                 max_tokens=1500,
-                # 注意：因為我們傳入了 http_client，這裡的 timeout 參數可能不會生效，以 http_client 設定的為準
-                # timeout=Timeout(read=60.0) # 保留或移除皆可，優先級可能較低
+                # timeout 參數可能仍由 custom_http_client 控制
             )
             grok_response = chat_completion.choices[0].message.content.strip()
             grok_duration = time.time() - grok_start_time
@@ -163,12 +161,11 @@ def process_and_push(user_id, event):
         except APIConnectionError:
              app.logger.error(f"Grok 連接錯誤 for user {user_id}")
              grok_response = "抱歉，我現在連不上我的 AI 大腦，請稍後再試。"
-        except Timeout: # Timeout 可能來自 httpx 或 Groq SDK 內部，保留捕捉
+        except Timeout:
              app.logger.warning(f"Grok 呼叫超時 for user {user_id}")
              grok_response = "抱歉，我想得有點久，可以試著換個問法或稍後再試嗎？"
         except Exception as e:
              app.logger.error(f"Grok API 未知錯誤 for user {user_id}: {e}", exc_info=True)
-
 
         # 4. 將 Grok 回應加入歷史 (不變)
         history.append({"role": "assistant", "content": grok_response})
@@ -201,13 +198,13 @@ def process_and_push(user_id, event):
         # 6. 使用 v2 的 Push API (不變)
         try:
             # ... (省略 v2 Push API 程式碼，與之前版本相同) ...
-            push_start_time = time.time()
-            line_bot_api.push_message(
-                user_id,
-                messages=TextSendMessage(text=grok_response)
-            )
-            push_duration = time.time() - push_start_time
-            app.logger.info(f"成功推送訊息給 user {user_id}，耗時 {push_duration:.2f} 秒。")
+             push_start_time = time.time()
+             line_bot_api.push_message(
+                 user_id,
+                 messages=TextSendMessage(text=grok_response)
+             )
+             push_duration = time.time() - push_start_time
+             app.logger.info(f"成功推送訊息給 user {user_id}，耗時 {push_duration:.2f} 秒。")
         except LineBotApiError as e:
             app.logger.error(f"推送訊息給 user {user_id} 失敗: {e.status_code} {e.error.message} {e.error.details}")
         except Exception as e:
