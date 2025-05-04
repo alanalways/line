@@ -4,6 +4,7 @@ import json
 import psycopg2
 import logging
 import httpx
+import hashlib
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError, LineBotApiError
@@ -24,14 +25,18 @@ channel_secret = os.getenv('LINE_CHANNEL_SECRET')
 grok_api_key = os.getenv('GROK_API_KEY')
 DATABASE_URL = os.getenv('DATABASE_URL')
 
-# 驗證環境變數並記錄 API Key 資訊
+# 驗證環境變數
 if not all([channel_access_token, channel_secret, grok_api_key]):
     app.logger.error("錯誤：LINE Token 或 Groq API Key 未設定！")
     exit()
 if not DATABASE_URL:
     app.logger.error("錯誤：DATABASE_URL 未設定！請在 Render 連接資料庫。")
     exit()
-app.logger.info(f"GROK_API_KEY 前4位: {grok_api_key[:4]}, 長度: {len(grok_api_key)}")
+
+# 記錄 API Key 詳細資訊
+key_hash = hashlib.sha256(grok_api_key.encode()).hexdigest()
+app.logger.info(f"GROK_API_KEY 前4位: {grok_api_key[:4]}, 長度: {len(grok_api_key)}, SHA-256: {key_hash[:8]}... (完整: {key_hash})")
+app.logger.info(f"GROK_API_KEY 原始值: {repr(grok_api_key)}")
 
 try:
     line_bot_api = LineBotApi(channel_access_token)
@@ -51,18 +56,27 @@ try:
         api_key=grok_api_key,
         http_client=custom_http_client
     )
-    # 測試 API Key 是否有效
+    # 測試 API Key
     try:
         test_response = groq_client.chat.completions.create(
             messages=[{"role": "user", "content": "test"}],
             model="grok-3-mini-beta",
             max_tokens=10
         )
-        app.logger.info("Grok API Key 測試成功，回應: {}".format(test_response.choices[0].message.content[:50]))
+        app.logger.info("Grok API Key 測試（聊天完成）成功，回應: {}".format(test_response.choices[0].message.content[:50]))
     except AuthenticationError as e:
-        app.logger.error(f"Grok API Key 測試失敗: {e}", exc_info=True)
+        app.logger.error(f"Grok API Key 測試（聊天完成）失敗: {e}", exc_info=True)
     except Exception as e:
-        app.logger.error(f"Grok API Key 測試錯誤: {type(e).__name__}: {e}", exc_info=True)
+        app.logger.error(f"Grok API Key 測試（聊天完成）錯誤: {type(e).__name__}: {e}", exc_info=True)
+
+    try:
+        models = groq_client.models.list()
+        app.logger.info(f"Grok API Key 測試（模型列表）成功，模型數: {len(models.data)}")
+    except AuthenticationError as e:
+        app.logger.error(f"Grok API Key 測試（模型列表）失敗: {e}", exc_info=True)
+    except Exception as e:
+        app.logger.error(f"Grok API Key 測試（模型列表）錯誤: {type(e).__name__}: {e}", exc_info=True)
+
     app.logger.info("Groq client 初始化成功。")
 except Exception as e:
     app.logger.error(f"無法初始化 Groq client: {e}", exc_info=True)
@@ -157,7 +171,7 @@ def process_and_push(user_id, event):
             history = history[-(MAX_HISTORY_TURNS * 2):]
 
         prompt_messages = history.copy()
-        grok_response = "系統錯誤，請稍後再試。"
+        grok_response = "AI 服務暫時不可用，請稍後再試。"
 
         try:
             grok_start = time.time()
@@ -176,7 +190,7 @@ def process_and_push(user_id, event):
             grok_response = "AI 無法連線或請求超時，請稍後再試。"
             app.logger.error(f"Grok API 連線或超時錯誤: {e}")
         except AuthenticationError as e:
-            grok_response = "API 金鑰驗證失敗，請確認 API Key 是否正確設定。"
+            grok_response = "AI 服務暫時不可用，請稍後再試。"
             app.logger.error(f"Grok API 認證錯誤: {e}", exc_info=True)
         except Exception as e:
             grok_response = "系統錯誤，請稍後再試。"
