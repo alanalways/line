@@ -3,10 +3,12 @@ import time
 import json
 import psycopg2 # 用於 PostgreSQL
 from flask import Flask, request, abort, logging # 加入 logging
-from linebot.v3 import WebhookHandler
-from linebot.v3.exceptions import InvalidSignatureError, LineBotApiError
+
+# v3 SDK 的 import 方式調整：
+from linebot.v3.exceptions import InvalidSignatureError # 只保留 InvalidSignatureError
 from linebot.v3.messaging import (
-    Configuration, ApiClient, MessagingApi, PushMessageRequest, TextMessage
+    Configuration, ApiClient, MessagingApi, PushMessageRequest, TextMessage,
+    ApiException # <--- 改為導入 ApiException
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 from dotenv import load_dotenv # 如果本機開發需要讀取 .env
@@ -54,8 +56,7 @@ def get_db_connection():
     """建立並返回一個 PostgreSQL 連接"""
     try:
         conn = psycopg2.connect(DATABASE_URL)
-        # 設定 client_encoding 以避免可能的編碼問題 (可選)
-        conn.set_client_encoding('UTF8')
+        conn.set_client_encoding('UTF8') # 確保 UTF8 編碼
         return conn
     except Exception as e:
         app.logger.error(f"資料庫連接失敗: {e}")
@@ -63,7 +64,6 @@ def get_db_connection():
 
 def init_db():
     """檢查並建立 conversation_history 資料表"""
-    # 使用 TEXT 而不是 VARCHAR(255) for user_id 以支援 LINE User ID 的長度
     sql = """
     CREATE TABLE IF NOT EXISTS conversation_history (
         user_id TEXT PRIMARY KEY,
@@ -83,7 +83,7 @@ def init_db():
         app.logger.error(f"無法初始化資料庫資料表: {e}")
         if conn: conn.rollback()
     finally:
-        if conn: conn.close()
+        if conn and not conn.closed: conn.close() # 確保關閉連接
 
 # --- 背景處理函數 (核心邏輯) ---
 def process_and_push(user_id, user_text):
@@ -115,7 +115,7 @@ def process_and_push(user_id, user_text):
 
         # 將新訊息加入歷史
         history.append({"role": "user", "content": user_text})
-        # 裁剪歷史紀錄，使其不超過最大輪數
+        # 裁剪歷史紀錄
         if len(history) > MAX_HISTORY_TURNS * 2:
             history = history[-(MAX_HISTORY_TURNS * 2):]
 
@@ -129,12 +129,9 @@ def process_and_push(user_id, user_text):
             app.logger.info(f"準備呼叫 Grok API (model: grok-3-mini-beta) for user {user_id}...")
             chat_completion = groq_client.chat.completions.create(
                 messages=prompt_messages,
-                # --- 使用你列表中的模型 ---
-                model="grok-3-mini-beta", # <<<--- 主要修改點！選用你列表中的模型
-                # 你也可以改成列表中的其他模型，例如 "grok-3-fast-beta"
-                # --- 其他參數 ---
+                model="grok-3-mini-beta", # 使用你列表中的模型
                 temperature=0.7,
-                max_tokens=1500, # 根據模型和需求調整
+                max_tokens=1500,
                 timeout=Timeout(read=60.0) # 60 秒讀取超時
             )
             grok_response = chat_completion.choices[0].message.content.strip()
@@ -149,7 +146,7 @@ def process_and_push(user_id, user_text):
             grok_response = "抱歉，我現在連不上我的 AI 大腦，請稍後再試。"
         except Timeout:
             app.logger.warning(f"Grok 呼叫超時 for user {user_id}")
-            grok_response = "抱歉，我想得有點久，可以換個問題或稍後再試嗎？"
+            grok_response = "抱歉，我想得有點久，可以試著換個問法或稍後再試嗎？"
         except Exception as e:
             app.logger.error(f"Grok API 未知錯誤 for user {user_id}: {e}", exc_info=True)
             # 維持預設錯誤訊息
@@ -164,7 +161,7 @@ def process_and_push(user_id, user_text):
         if conn: # 只有在連接成功時才嘗試儲存
             try:
                 if conn.closed:
-                    app.logger.warning(f"DB 連接已關閉，無法儲存 user {user_id} 的歷史。重新連接...")
+                    app.logger.warning(f"DB 連接已關閉，無法儲存 user {user_id} 的歷史。嘗試重新連接...")
                     conn = get_db_connection() # 嘗試重新連接
                     if not conn: raise Exception("無法重新連接資料庫")
 
@@ -196,8 +193,9 @@ def process_and_push(user_id, user_text):
                 )
             push_duration = time.time() - push_start_time
             app.logger.info(f"成功推送訊息給 user {user_id}，耗時 {push_duration:.2f} 秒。")
-        except LineBotApiError as e:
-            app.logger.error(f"推送訊息給 user {user_id} 失敗: Status={e.status_code}, Reason={e.reason}, Body={e.body}")
+        except ApiException as e: # <--- 修改點：捕捉 ApiException
+            # 使用 v3 的 ApiException 提供的屬性來記錄錯誤
+            app.logger.error(f"推送訊息給 user {user_id} 失敗: Status={e.status}, Reason={e.reason}, Body={e.body}")
         except Exception as e:
              app.logger.error(f"推送訊息給 user {user_id} 時發生未知錯誤: {e}", exc_info=True)
 
@@ -227,9 +225,10 @@ def callback():
     except InvalidSignatureError:
         app.logger.error("簽名驗證失敗！請檢查 Channel Secret。")
         abort(400)
-    except LineBotApiError as e:
-         app.logger.error(f"處理 Webhook 時發生 LINE API 錯誤: {e.status_code} {e.reason} {e.body}")
-         abort(500) # 返回伺服器錯誤
+    except ApiException as e: # <--- 修改點：捕捉 ApiException
+        # 使用 v3 的 ApiException 提供的屬性來記錄錯誤
+        app.logger.error(f"處理 Webhook 時發生 LINE API 錯誤: Status={e.status}, Reason={e.reason}, Body={e.body}")
+        abort(500) # 返回伺服器錯誤
     except Exception as e:
         app.logger.error(f"處理 Webhook 時發生未知錯誤: {e}", exc_info=True)
         abort(500)
@@ -252,7 +251,7 @@ def handle_message(event):
     # handle_message 不需要返回 'OK'
 
 # --- 主程式進入點與初始化 ---
-# Gunicorn 會導入 'app' 這個 Flask 物件，所以初始化放外面
+# 應用程式啟動時(無論是本機或 Gunicorn)，都嘗試初始化資料庫
 try:
     init_db()
     app.logger.info("資料庫初始化檢查完成。")
@@ -264,5 +263,8 @@ except Exception as e:
 if __name__ == "__main__":
     app.logger.info("以 __main__ 方式啟動 (通常用於本機測試)。")
     port = int(os.environ.get('PORT', 8080))
-    # debug=False 很重要，避免在生產環境(或模擬環境)使用 debug 模式
+    # debug=False 很重要
     app.run(host='0.0.0.0', port=port, debug=False)
+else:
+    # 如果是 Gunicorn 在運行 (它會導入 app 物件)
+    app.logger.info("Flask 應用程式 (透過 Gunicorn 或其他 WSGI 伺服器) 啟動。")
