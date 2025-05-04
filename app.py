@@ -5,14 +5,14 @@ import psycopg2
 import logging
 from flask import Flask, request, abort
 
+# v3 SDK 的 import 方式 (使用標準導入)
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi, PushMessageRequest, TextMessage,
     ApiException
 )
-# --- 再次修正 Webhook 導入路徑 ---
-from linebot.v3.webhooks.parser import WebhookParser # <--- 使用更直接的路徑導入
-from linebot.v3.webhooks import MessageEvent, TextMessageContent # 其他事件/內容導入不變
+# --- 使用標準路徑導入 WebhookParser ---
+from linebot.v3.webhooks import MessageEvent, TextMessageContent, WebhookParser # <--- 改回標準導入
 
 from dotenv import load_dotenv
 from groq import Groq, Timeout, APIConnectionError, RateLimitError
@@ -40,7 +40,8 @@ if not DATABASE_URL:
 
 # LINE SDK 設定
 configuration = Configuration(access_token=channel_access_token)
-parser = WebhookParser(channel_secret) # 這裡不變，還是用 WebhookParser
+# 使用 WebhookParser 初始化
+parser = WebhookParser(channel_secret)
 
 # Groq Client 初始化
 try:
@@ -56,7 +57,6 @@ MAX_HISTORY_TURNS = 5
 # --- 資料庫輔助函數 ---
 # (get_db_connection 和 init_db 函數保持不變)
 def get_db_connection():
-    """建立並返回一個 PostgreSQL 連接"""
     try:
         conn = psycopg2.connect(DATABASE_URL)
         conn.set_client_encoding('UTF8')
@@ -66,7 +66,6 @@ def get_db_connection():
         return None
 
 def init_db():
-    """檢查並建立 conversation_history 資料表"""
     sql = """
     CREATE TABLE IF NOT EXISTS conversation_history (
         user_id TEXT PRIMARY KEY,
@@ -91,7 +90,6 @@ def init_db():
 # --- 背景處理函數 (核心邏輯) ---
 # (process_and_push 函數保持不變)
 def process_and_push(user_id, user_text):
-    """在背景執行緒中處理訊息、呼叫 Grok、更新歷史、推送回覆"""
     app.logger.info(f"開始背景處理 user {user_id} 的訊息: '{user_text[:50]}...'")
     start_process_time = time.time()
     conn = None
