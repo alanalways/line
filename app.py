@@ -55,11 +55,11 @@ def get_conversation_history(user_id, limit=10):
     history = c.fetchall()
     conn.close()
     history.reverse()  # 反轉以按時間順序排列
+    app.logger.info(f"Conversation history for {user_id}: {history}")
     return [{"role": row[0], "content": row[1]} for row in history]
 
 # 檢查是否為簡單數學運算
 def is_simple_math(message):
-    # 匹配簡單的加減乘除運算，例如 "1+1" 或 "2*3 等於多少"
     pattern = r'^\s*(\d+)\s*([+\-*/])\s*(\d+)\s*(等於多少)?\s*$'
     return re.match(pattern, message)
 
@@ -80,12 +80,23 @@ def calculate_simple_math(message):
         return str(num1 / num2) if num2 != 0 else "錯誤：除數不能為 0"
     return None
 
+# 檢查是否為查詢歷史問題
+def is_history_query(message):
+    return message.strip() in ["我剛剛問什麼", "我之前問了什麼"]
+
+# 從歷史中提取上一個問題
+def get_last_question(user_id):
+    history = get_conversation_history(user_id, limit=2)
+    if len(history) >= 2 and history[1]["role"] == "user":
+        return history[1]["content"]
+    return "我沒有記錄到你的上一個問題。"
+
 # 聯網搜尋功能
 def web_search(query):
     try:
         search_url = f"https://www.google.com/search?q={query}"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        response = requests.get(search_url, headers=headers)
+        response = requests.get(search_url, headers=headers, timeout=5)  # 添加超時限制
         soup = BeautifulSoup(response.text, 'html.parser')
         results = soup.find_all('div', class_='BNeawe s3v9rd AP7Wnd')
         if results:
@@ -112,7 +123,6 @@ def call_grok_api(messages, model, image_url=None):
         "Authorization": f"Bearer {GROK_API_KEY}",
         "Content-Type": "application/json"
     }
-    # 根據是否有圖片輸入，調整 messages 格式
     if image_url and model == "grok-2-vision-1212":
         messages.append({
             "role": "user",
@@ -121,14 +131,14 @@ def call_grok_api(messages, model, image_url=None):
                 {"type": "image_url", "image_url": {"url": image_url}}
             ]
         })
-        messages[-2]["content"] = messages[-2]["content"]  # 移除最後一條純文字訊息的 content
+        messages[-2]["content"] = messages[-2]["content"]
     data = {
         "model": model,
         "messages": messages,
-        "max_tokens": 1000
+        "max_tokens": 500  # 減少 max_tokens 以加快回應
     }
     try:
-        response = requests.post(GROK_API_URL, headers=headers, json=data)
+        response = requests.post(GROK_API_URL, headers=headers, json=data, timeout=10)  # 添加超時限制
         response.raise_for_status()
         reply = response.json()['choices'][0]['message']['content']
         app.logger.info(f"Grok API response: {reply}")
@@ -148,9 +158,9 @@ def generate_image(prompt):
         "prompt": prompt
     }
     try:
-        response = requests.post(GROK_IMAGE_API_URL, headers=headers, json=data)
+        response = requests.post(GROK_IMAGE_API_URL, headers=headers, json=data, timeout=10)
         response.raise_for_status()
-        return response.json()["data"][0]["url"]  # 假設 API 返回圖片 URL
+        return response.json()["data"][0]["url"]
     except requests.RequestException as e:
         app.logger.error(f"Image generation error: {str(e)}")
         return f"錯誤：無法生成圖片 - {str(e)}"
@@ -173,6 +183,9 @@ def handle_text_message(event):
     math_result = calculate_simple_math(user_message)
     if math_result:
         reply = f"計算結果：{math_result}"
+    # 檢查是否為查詢歷史問題
+    elif is_history_query(user_message):
+        reply = f"你剛剛問：{get_last_question(user_id)}"
     else:
         # 取得對話歷史
         conversation_history = get_conversation_history(user_id)
@@ -193,7 +206,7 @@ def handle_text_message(event):
         else:
             # 使用 grok-3-beta 處理文字
             reply = call_grok_api(conversation_history, model="grok-3-beta")
-            # 如果回應不理想（例如過於簡短或無意義），進行聯網搜尋
+            # 如果回應不理想，進行聯網搜尋
             if len(reply) < 50 or "錯誤" in reply:
                 app.logger.info(f"Grok API reply too short or failed, performing web search: {user_message}")
                 reply = web_search(user_message)
