@@ -7,7 +7,6 @@ import requests
 import json
 import sqlite3
 from datetime import datetime
-from bs4 import BeautifulSoup  # 用於簡單 HTML 處理
 import re  # 用於簡單數學運算檢查
 import subprocess  # 用於啟動 Fetch MCP 伺服器
 import asyncio
@@ -213,7 +212,7 @@ def handle_text_message(event):
                 line_bot_api.reply_message(reply_token, ImageSendMessage(original_content_url=image_url, preview_image_url=image_url))
                 return
         else:
-            # 使用 grok-3-beta 處理文字
+            # 使用 grok-3-beta 處理文字，移除 web_search 邏輯
             reply = call_grok_api(conversation_history, model="grok-3-beta")
 
     # 儲存模型回應
