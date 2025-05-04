@@ -1,6 +1,6 @@
 flask==2.0.1
 werkzeug<3.0,>=2.0
-line-bot-sdk==3.4.0
+line-bot-sdk==3.8.1
 # requests>=2.32.3  <--- 確保這一行被刪除或註解掉
 groq==0.8.0
 psycopg2-binary
