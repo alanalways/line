@@ -7,8 +7,10 @@ import requests
 import json
 import sqlite3
 from datetime import datetime
-from bs4 import BeautifulSoup  # 用於網頁搜尋
+from bs4 import BeautifulSoup  # 用於簡單 HTML 處理
 import re  # 用於簡單數學運算檢查
+import subprocess  # 用於啟動 Fetch MCP 伺服器
+import asyncio
 
 app = Flask(__name__)
 
@@ -21,7 +23,7 @@ GROK_API_KEY = os.environ['GROK_API_KEY']
 GROK_API_URL = "https://api.x.ai/v1/chat/completions"
 GROK_IMAGE_API_URL = "https://api.x.ai/v1/image/generations"
 
-# 初始化 SQLite 資料庫（使用檔案）
+# 初始化 SQLite 資料庫
 DB_PATH = "conversations.db"
 
 def init_db():
@@ -54,22 +56,24 @@ def get_conversation_history(user_id, limit=10):
     c.execute("SELECT role, message FROM conversations WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?", (user_id, limit))
     history = c.fetchall()
     conn.close()
-    history.reverse()  # 反轉以按時間順序排列
-    app.logger.info(f"Conversation history for {user_id}: {history}")
+    history.reverse()
     return [{"role": row[0], "content": row[1]} for row in history]
 
 # 檢查是否為簡單數學運算
 def is_simple_math(message):
-    pattern = r'^\s*(\d+)\s*([+\-*/])\s*(\d+)\s*(等於多少)?\s*$'
-    return re.match(pattern, message)
+    pattern = r'^\s*(\d+)\s*([+\-*/])\s*(\d+)\s*(等於多少)?\s*$|^\s*(\d+)\s*([+\-*/])\s*(\d+)\s*$'
+    match = re.match(pattern, message.strip())
+    return match
 
 # 計算簡單數學運算
 def calculate_simple_math(message):
     match = is_simple_math(message)
     if not match:
         return None
-    num1, operator, num2, _ = match.groups()
-    num1, num2 = int(num1), int(num2)
+    groups = match.groups()
+    num1 = int(groups[0] if groups[0] else groups[4])
+    num2 = int(groups[2] if groups[2] else groups[6])
+    operator = groups[1] if groups[1] else groups[5]
     if operator == '+':
         return str(num1 + num2)
     elif operator == '-':
@@ -91,84 +95,70 @@ def get_last_question(user_id):
         return history[1]["content"]
     return "我沒有記錄到你的上一個問題。"
 
-# 聯網搜尋功能
-def web_search(query):
+# 啟動 Fetch MCP 伺服器
+def start_fetch_mcp_server():
     try:
-        search_url = f"https://www.google.com/search?q={query}"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        response = requests.get(search_url, headers=headers, timeout=5)  # 添加超時限制
-        soup = BeautifulSoup(response.text, 'html.parser')
-        results = soup.find_all('div', class_='BNeawe s3v9rd AP7Wnd')
-        if results:
-            return results[0].get_text()[:500]  # 取前 500 字
-        return "無法從網路上找到相關資訊。"
+        # 假設使用 uvx 啟動 Fetch MCP 伺服器
+        subprocess.Popen(["uvx", "mcp-server-fetch"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return True
     except Exception as e:
-        return f"搜尋失敗：{str(e)}"
+        print(f"啟動 Fetch MCP 伺服器失敗: {e}")
+        return False
 
-@app.route("/callback", methods=['POST'])
-def callback():
-    signature = request.headers['X-Line-Signature']
-    body = request.get_data(as_text=True)
-    app.logger.info(f"Request body: {body}")
+# 調用 Fetch MCP 獲取網頁內容
+async def fetch_web_content(url):
     try:
-        handler.handle(body, signature)
-    except InvalidSignatureError:
-        app.logger.error("Invalid signature.")
-        abort(400)
-    return 'OK'
+        # 這裡模擬與 Fetch MCP 伺服器的通訊，實際需要根據 MCP 協議實現
+        # 假設 Fetch MCP 提供一個簡單的 HTTP 接口
+        response = requests.post("http://localhost:3000/fetch", json={"url": url, "max_length": 5000})
+        response.raise_for_status()
+        return response.json().get("content", "無法獲取網頁內容")
+    except Exception as e:
+        return f"獲取網頁內容失敗: {e}"
+
+# 檢查是否為網頁查詢
+def is_web_query(message):
+    return message.strip().startswith("查詢網頁: ")
 
 # 調用 Grok API 的通用函數
 def call_grok_api(messages, model, image_url=None):
-    headers = {
-        "Authorization": f"Bearer {GROK_API_KEY}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {GROK_API_KEY}", "Content-Type": "application/json"}
     if image_url and model == "grok-2-vision-1212":
-        messages.append({
-            "role": "user",
-            "content": [
-                {"type": "text", "text": messages[-1]["content"]},
-                {"type": "image_url", "image_url": {"url": image_url}}
-            ]
-        })
+        messages.append({"role": "user", "content": [{"type": "text", "text": messages[-1]["content"]}, {"type": "image_url", "image_url": {"url": image_url}}]})
         messages[-2]["content"] = messages[-2]["content"]
-    data = {
-        "model": model,
-        "messages": messages,
-        "max_tokens": 500  # 減少 max_tokens 以加快回應
-    }
+    data = {"model": model, "messages": messages, "max_tokens": 500}
     try:
-        response = requests.post(GROK_API_URL, headers=headers, json=data, timeout=10)  # 添加超時限制
+        response = requests.post(GROK_API_URL, headers=headers, json=data, timeout=10)
         response.raise_for_status()
-        reply = response.json()['choices'][0]['message']['content']
-        app.logger.info(f"Grok API response: {reply}")
-        return reply
+        return response.json()['choices'][0]['message']['content']
     except requests.RequestException as e:
-        app.logger.error(f"Grok API error: {str(e)}")
-        return f"錯誤：無法連接到 xAI API - {str(e)}"
+        return f"錯誤：無法連接到 xAI API - {e}"
 
 # 生成圖片的函數
 def generate_image(prompt):
-    headers = {
-        "Authorization": f"Bearer {GROK_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "model": "grok-2-image-1212",
-        "prompt": prompt
-    }
+    headers = {"Authorization": f"Bearer {GROK_API_KEY}", "Content-Type": "application/json"}
+    data = {"model": "grok-2-image-1212", "prompt": prompt}
     try:
         response = requests.post(GROK_IMAGE_API_URL, headers=headers, json=data, timeout=10)
         response.raise_for_status()
         return response.json()["data"][0]["url"]
     except requests.RequestException as e:
-        app.logger.error(f"Image generation error: {str(e)}")
-        return f"錯誤：無法生成圖片 - {str(e)}"
+        return f"錯誤：無法生成圖片 - {e}"
 
 # 檢查是否為圖片生成請求
 def is_image_generation_request(message):
     keywords = ["生成圖片", "畫", "圖片", "繪製", "create image", "draw"]
     return any(keyword in message.lower() for keyword in keywords)
+
+@app.route("/callback", methods=['POST'])
+def callback():
+    signature = request.headers['X-Line-Signature']
+    body = request.get_data(as_text=True)
+    try:
+        handler.handle(body, signature)
+    except InvalidSignatureError:
+        abort(400)
+    return 'OK'
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
@@ -179,6 +169,11 @@ def handle_text_message(event):
     # 儲存用戶訊息
     save_message(user_id, user_message, "user")
 
+    # 啟動 Fetch MCP 伺服器（僅在應用啟動時執行一次）
+    if not hasattr(app, 'fetch_mcp_started') or not app.fetch_mcp_started:
+        start_fetch_mcp_server()
+        app.fetch_mcp_started = True
+
     # 檢查是否為簡單數學運算
     math_result = calculate_simple_math(user_message)
     if math_result:
@@ -186,6 +181,12 @@ def handle_text_message(event):
     # 檢查是否為查詢歷史問題
     elif is_history_query(user_message):
         reply = f"你剛剛問：{get_last_question(user_id)}"
+    # 檢查是否為網頁查詢
+    elif is_web_query(user_message):
+        url = user_message.replace("查詢網頁: ", "").strip()
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        reply = loop.run_until_complete(fetch_web_content(url))
     else:
         # 取得對話歷史
         conversation_history = get_conversation_history(user_id)
@@ -198,30 +199,20 @@ def handle_text_message(event):
                 reply = image_url
             else:
                 save_message(user_id, "生成了一張圖片", "assistant")
-                line_bot_api.reply_message(
-                    reply_token,
-                    ImageSendMessage(original_content_url=image_url, preview_image_url=image_url)
-                )
+                line_bot_api.reply_message(reply_token, ImageSendMessage(original_content_url=image_url, preview_image_url=image_url))
                 return
         else:
             # 使用 grok-3-beta 處理文字
             reply = call_grok_api(conversation_history, model="grok-3-beta")
-            # 如果回應不理想，進行聯網搜尋
-            if len(reply) < 50 or "錯誤" in reply:
-                app.logger.info(f"Grok API reply too short or failed, performing web search: {user_message}")
-                reply = web_search(user_message)
 
     # 儲存模型回應
     save_message(user_id, reply, "assistant")
 
     # 回覆用戶
     try:
-        line_bot_api.reply_message(
-            reply_token,
-            TextSendMessage(text=reply)
-        )
+        line_bot_api.reply_message(reply_token, TextSendMessage(text=reply))
     except Exception as e:
-        app.logger.error(f"Failed to reply: {str(e)}")
+        print(f"Failed to reply: {e}")
 
 @handler.add(MessageEvent, message=ImageMessage)
 def handle_image_message(event):
@@ -229,7 +220,6 @@ def handle_image_message(event):
     message_id = event.message.id
     reply_token = event.reply_token
 
-    # 取得圖片內容
     headers = {"Authorization": f"Bearer {os.environ['LINE_CHANNEL_ACCESS_TOKEN']}"}
     response = requests.get(f"https://api-data.line.me/v2/bot/message/{message_id}/content", headers=headers)
     if response.status_code != 200:
@@ -238,28 +228,19 @@ def handle_image_message(event):
         line_bot_api.reply_message(reply_token, TextSendMessage(text=reply))
         return
 
-    # 假設圖片需要上傳到公開儲存（這裡簡化為直接使用 URL）
     image_url = f"https://api-data.line.me/v2/bot/message/{message_id}/content"
-
-    # 儲存用戶圖片訊息
     save_message(user_id, "用戶傳送了一張圖片", "user")
 
-    # 取得對話歷史並使用 grok-2-vision-1212 處理圖片
     conversation_history = get_conversation_history(user_id)
     conversation_history.append({"role": "user", "content": "請描述這張圖片的內容"})
     reply = call_grok_api(conversation_history, model="grok-2-vision-1212", image_url=image_url)
 
-    # 儲存模型回應
     save_message(user_id, reply, "assistant")
 
-    # 回覆用戶
     try:
-        line_bot_api.reply_message(
-            reply_token,
-            TextSendMessage(text=reply)
-        )
+        line_bot_api.reply_message(reply_token, TextSendMessage(text=reply))
     except Exception as e:
-        app.logger.error(f"Failed to reply: {str(e)}")
+        print(f"Failed to reply: {e}")
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
