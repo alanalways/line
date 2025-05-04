@@ -3,5 +3,9 @@ werkzeug<3.0,>=2.0
 line-bot-sdk==2.3.0
 requests>=2.32.3
 groq==0.8.0
-beautifulsoup4==4.12.3
-mcp-server-fetch
+psycopg2-binary # <--- 加入這個
+python-dotenv>=1.0.0 # <--- 確認有 (如果本機開發需要)
+gunicorn # <--- 加入這個 (用於 Render 啟動)
+# 移除 mcp-server-fetch 那一行
+# 移除 beautifulsoup4 (如果確定不再需要)
+# 其他你確定需要的套件...
