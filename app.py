@@ -9,6 +9,7 @@ import sqlite3
 from datetime import datetime
 import asyncio
 import time
+import subprocess
 
 app = Flask(__name__)
 
@@ -72,14 +73,9 @@ def get_last_question(user_id):
 # 啟動 Fetch MCP 伺服器
 def start_fetch_mcp_server():
     try:
-        # 直接使用 Python 模組啟動 Fetch MCP
-        from mcp_server_fetch import run
-        run(port=3000)  # 假設模組提供 run 函數，端口設為 3000
+        subprocess.Popen(["uvx", "mcp-server-fetch"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         app.logger.info("Fetch MCP server started successfully")
         return True
-    except ImportError as e:
-        app.logger.error(f"Failed to start Fetch MCP server: {e}")
-        return False
     except Exception as e:
         app.logger.error(f"Failed to start Fetch MCP server: {e}")
         return False
