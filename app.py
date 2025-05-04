@@ -5,7 +5,7 @@ from linebot.models import MessageEvent, TextMessage, ImageMessage, TextSendMess
 import os
 import requests
 import json
-import psycopg2
+import sqlite3
 from datetime import datetime
 from bs4 import BeautifulSoup  # 用於網頁搜尋
 
@@ -20,32 +20,32 @@ GROK_API_KEY = os.environ['GROK_API_KEY']
 GROK_API_URL = "https://api.x.ai/v1/chat/completions"
 GROK_IMAGE_API_URL = "https://api.x.ai/v1/image/generations"
 
-# 初始化 PostgreSQL 資料庫
+# 初始化記憶體 SQLite 資料庫
 def init_db():
-    conn = psycopg2.connect(os.environ['DATABASE_URL'])
+    conn = sqlite3.connect(':memory:')
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS conversations
-                 (id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE conversations
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   user_id TEXT NOT NULL,
                   message TEXT NOT NULL,
                   role TEXT NOT NULL,
-                  timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+                  timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     conn.commit()
     conn.close()
 
 # 儲存對話到資料庫
 def save_message(user_id, message, role):
-    conn = psycopg2.connect(os.environ['DATABASE_URL'])
+    conn = sqlite3.connect(':memory:')
     c = conn.cursor()
-    c.execute("INSERT INTO conversations (user_id, message, role) VALUES (%s, %s, %s)", (user_id, message, role))
+    c.execute("INSERT INTO conversations (user_id, message, role) VALUES (?, ?, ?)", (user_id, message, role))
     conn.commit()
     conn.close()
 
 # 取得對話歷史
 def get_conversation_history(user_id, limit=10):
-    conn = psycopg2.connect(os.environ['DATABASE_URL'])
+    conn = sqlite3.connect(':memory:')
     c = conn.cursor()
-    c.execute("SELECT role, message FROM conversations WHERE user_id = %s ORDER BY timestamp DESC LIMIT %s", (user_id, limit))
+    c.execute("SELECT role, message FROM conversations WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?", (user_id, limit))
     history = c.fetchall()
     conn.close()
     history.reverse()  # 反轉以按時間順序排列
@@ -57,12 +57,10 @@ init_db()
 # 聯網搜尋功能
 def web_search(query):
     try:
-        # 簡單使用 Google 搜尋（這裡使用一個假設的搜尋端點，實際應使用 Google Custom Search API）
         search_url = f"https://www.google.com/search?q={query}"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         response = requests.get(search_url, headers=headers)
         soup = BeautifulSoup(response.text, 'html.parser')
-        # 提取搜尋結果（簡化處理，實際應解析具體內容）
         results = soup.find_all('div', class_='BNeawe s3v9rd AP7Wnd')
         if results:
             return results[0].get_text()[:500]  # 取前 500 字
