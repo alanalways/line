@@ -1,6 +1,7 @@
 flask==2.0.1
-werkzeug>=2.0,<3.0  # 限制 werkzeug 版本，與 flask 2.0.1 相容
+werkzeug<3.0,>=2.0
 line-bot-sdk==2.3.0
 requests==2.28.1
-groq==0.8.0  # 用於與 Grok API 互動
-beautifulsoup4==4.12.3  # 用於網頁搜尋
+groq==0.8.0
+beautifulsoup4==4.12.3
+mcp-server-fetch
