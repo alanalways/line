@@ -1,3 +1,4 @@
 flask==2.0.1
+werkzeug>=2.0,<3.0  # 限制 werkzeug 版本，與 flask 2.0.1 相容
 line-bot-sdk==2.3.0
 requests==2.28.1
