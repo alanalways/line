@@ -1,234 +1,268 @@
-from flask import Flask, request, abort
-from linebot import LineBotApi, WebhookHandler
-from linebot.exceptions import InvalidSignatureError, LineBotApiError
-from linebot.models import MessageEvent, TextMessage, ImageMessage, TextSendMessage, ImageSendMessage
 import os
-import requests
-import json
-import sqlite3
-from datetime import datetime
-import asyncio
 import time
-import subprocess
+import json
+import psycopg2 # 用於 PostgreSQL
+from flask import Flask, request, abort, logging # 加入 logging
+from linebot.v3 import WebhookHandler
+from linebot.v3.exceptions import InvalidSignatureError, LineBotApiError
+from linebot.v3.messaging import (
+    Configuration, ApiClient, MessagingApi, PushMessageRequest, TextMessage
+)
+from linebot.v3.webhooks import MessageEvent, TextMessageContent
+from dotenv import load_dotenv # 如果本機開發需要讀取 .env
+from groq import Groq, Timeout, APIConnectionError, RateLimitError # Grok SDK 和錯誤
+from threading import Thread # 用於背景處理
+
+# --- 載入環境變數 ---
+load_dotenv() # 如果使用 .env 檔案
 
 app = Flask(__name__)
+# 設定日誌記錄器，方便在 Render Logs 中查看
+app.logger.setLevel(logging.INFO)
 
-# LINE 設定
-line_bot_api = LineBotApi(os.environ['LINE_CHANNEL_ACCESS_TOKEN'])
-handler = WebhookHandler(os.environ['LINE_CHANNEL_SECRET'])
+# --- 設定 ---
+channel_access_token = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
+channel_secret = os.getenv('LINE_CHANNEL_SECRET')
+grok_api_key = os.getenv('GROK_API_KEY')
+DATABASE_URL = os.getenv('DATABASE_URL') # Render 會自動提供
 
-# Grok API 設定
-GROK_API_KEY = os.environ['GROK_API_KEY']
-GROK_API_URL = "https://api.x.ai/v1/chat/completions"
-GROK_IMAGE_API_URL = "https://api.x.ai/v1/image/generations"
+# 檢查必要的環境變數是否存在
+if not all([channel_access_token, channel_secret, grok_api_key]):
+    app.logger.error("錯誤：LINE Token 或 Grok API Key 未設定！")
+    exit() # 缺少必要金鑰，直接退出
+if not DATABASE_URL:
+    app.logger.error("錯誤：DATABASE_URL 未設定！請在 Render 連接資料庫。")
+    exit() # 記憶功能無法運作
 
-# 初始化 SQLite 資料庫
-DB_PATH = "conversations.db"
+# LINE SDK 設定
+configuration = Configuration(access_token=channel_access_token)
+handler = WebhookHandler(channel_secret)
+
+# Groq Client 初始化
+try:
+    groq_client = Groq(api_key=grok_api_key)
+    app.logger.info("Groq client 初始化成功。")
+except Exception as e:
+    app.logger.error(f"無法初始化 Groq client: {e}")
+    exit() # Groq 無法使用，服務也沒意義了
+
+# 對話記憶設定
+MAX_HISTORY_TURNS = 5 # 記住最近 5 輪對話 (使用者+機器人) = 10 條訊息
+
+# --- 資料庫輔助函數 ---
+def get_db_connection():
+    """建立並返回一個 PostgreSQL 連接"""
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        # 設定 client_encoding 以避免可能的編碼問題 (可選)
+        conn.set_client_encoding('UTF8')
+        return conn
+    except Exception as e:
+        app.logger.error(f"資料庫連接失敗: {e}")
+        return None
 
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS conversations
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  user_id TEXT NOT NULL,
-                  message TEXT NOT NULL,
-                  role TEXT NOT NULL,
-                  timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-    conn.commit()
-    conn.close()
-
-# 確保資料庫在應用啟動時初始化
-init_db()
-
-# 儲存對話到資料庫
-def save_message(user_id, message, role):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("INSERT INTO conversations (user_id, message, role) VALUES (?, ?, ?)", (user_id, message, role))
-    conn.commit()
-    conn.close()
-
-# 取得對話歷史
-def get_conversation_history(user_id, limit=10):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT role, message FROM conversations WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?", (user_id, limit))
-    history = c.fetchall()
-    conn.close()
-    history.reverse()
-    app.logger.info(f"Conversation history for {user_id}: {history}")
-    return [{"role": row[0], "content": row[1]} for row in history]
-
-# 檢查是否為查詢歷史問題
-def is_history_query(message):
-    return message.strip() in ["我剛剛問什麼", "我之前問了什麼"]
-
-# 從歷史中提取上一個問題
-def get_last_question(user_id):
-    history = get_conversation_history(user_id, limit=2)
-    if len(history) >= 2 and history[1]["role"] == "user":
-        return history[1]["content"]
-    return "我沒有記錄到你的上一個問題。"
-
-# 啟動 Fetch MCP 伺服器
-def start_fetch_mcp_server():
+    """檢查並建立 conversation_history 資料表"""
+    # 使用 TEXT 而不是 VARCHAR(255) for user_id 以支援 LINE User ID 的長度
+    sql = """
+    CREATE TABLE IF NOT EXISTS conversation_history (
+        user_id TEXT PRIMARY KEY,
+        history JSONB
+    );
+    """
+    conn = get_db_connection()
+    if not conn:
+        app.logger.error("無法初始化資料庫 (無連接)。")
+        return
     try:
-        subprocess.Popen(["uvx", "mcp-server-fetch"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        app.logger.info("Fetch MCP server started successfully")
-        return True
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            conn.commit()
+        app.logger.info("資料庫資料表 'conversation_history' 檢查/建立 完成。")
     except Exception as e:
-        app.logger.error(f"Failed to start Fetch MCP server: {e}")
-        return False
+        app.logger.error(f"無法初始化資料庫資料表: {e}")
+        if conn: conn.rollback()
+    finally:
+        if conn: conn.close()
 
-# 調用 Fetch MCP 獲取網頁內容
-async def fetch_web_content(url):
+# --- 背景處理函數 (核心邏輯) ---
+def process_and_push(user_id, user_text):
+    """在背景執行緒中處理訊息、呼叫 Grok、更新歷史、推送回覆"""
+    app.logger.info(f"開始背景處理 user {user_id} 的訊息: '{user_text[:50]}...'")
+    start_process_time = time.time()
+    conn = None
+    history = [] # 預設空歷史
+
     try:
-        response = requests.post("http://localhost:3000/fetch", json={"url": url, "max_length": 5000}, timeout=10)
-        response.raise_for_status()
-        content = response.json().get("content", "無法獲取網頁內容")
-        app.logger.info(f"Fetched web content from {url}: {content[:100]}...")
-        return content
-    except Exception as e:
-        app.logger.error(f"Failed to fetch web content from {url}: {e}")
-        return f"獲取網頁內容失敗: {e}"
+        # 1. 從資料庫讀取歷史紀錄
+        conn = get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT history FROM conversation_history WHERE user_id = %s;", (user_id,))
+                    result = cur.fetchone()
+                    if result and result[0]:
+                        history = json.loads(result[0]) # 從 JSONB 載入
+                        app.logger.info(f"成功載入 user {user_id} 的歷史，長度: {len(history)}")
+                    else:
+                         app.logger.info(f"無 user {user_id} 的歷史紀錄。")
+            except (Exception, psycopg2.DatabaseError) as db_err:
+                app.logger.error(f"讀取 user {user_id} 的 DB 歷史時出錯: {db_err}")
+                history = [] # 出錯則從空歷史開始
+                if conn and not conn.closed: conn.rollback() # 回滾事務
+        else:
+             app.logger.warning("無法連接資料庫，將不使用歷史紀錄。")
 
-# 檢查是否為網頁查詢
-def is_web_query(message):
-    return message.strip().startswith("查詢網頁: ")
+        # 將新訊息加入歷史
+        history.append({"role": "user", "content": user_text})
+        # 裁剪歷史紀錄，使其不超過最大輪數
+        if len(history) > MAX_HISTORY_TURNS * 2:
+            history = history[-(MAX_HISTORY_TURNS * 2):]
 
-# 調用 Grok API 的通用函數（添加重試機制）
-def call_grok_api(messages, model, image_url=None, retries=1, timeout=20):
-    headers = {"Authorization": f"Bearer {GROK_API_KEY}", "Content-Type": "application/json"}
-    if image_url and model == "grok-2-vision-1212":
-        messages.append({"role": "user", "content": [{"type": "text", "text": messages[-1]["content"]}, {"type": "image_url", "image_url": {"url": image_url}}]})
-        messages[-2]["content"] = messages[-2]["content"]
-    data = {"model": model, "messages": messages, "max_tokens": 500}
-    
-    for attempt in range(retries + 1):
+        # 2. 準備呼叫 Grok (Web Search 已移除)
+        prompt_messages = history.copy()
+        grok_response = "抱歉，系統發生錯誤，請稍後再試。" # 預設錯誤回覆
+
+        # 3. 呼叫 Grok API
         try:
-            response = requests.post(GROK_API_URL, headers=headers, json=data, timeout=timeout)
-            response.raise_for_status()
-            reply = response.json()['choices'][0]['message']['content']
-            app.logger.info(f"Grok API response: {reply}")
-            return reply
-        except requests.RequestException as e:
-            app.logger.error(f"Grok API error (attempt {attempt + 1}/{retries + 1}): {e}")
-            if attempt == retries:
-                return "Grok API 目前無法回應，請稍後再試。"
-            time.sleep(2)  # 等待 2 秒後重試
+            grok_start_time = time.time()
+            app.logger.info(f"準備呼叫 Grok API (model: grok-3-mini-beta) for user {user_id}...")
+            chat_completion = groq_client.chat.completions.create(
+                messages=prompt_messages,
+                # --- 使用你列表中的模型 ---
+                model="grok-3-mini-beta", # <<<--- 主要修改點！選用你列表中的模型
+                # 你也可以改成列表中的其他模型，例如 "grok-3-fast-beta"
+                # --- 其他參數 ---
+                temperature=0.7,
+                max_tokens=1500, # 根據模型和需求調整
+                timeout=Timeout(read=60.0) # 60 秒讀取超時
+            )
+            grok_response = chat_completion.choices[0].message.content.strip()
+            grok_duration = time.time() - grok_start_time
+            app.logger.info(f"Grok API 呼叫成功 for user {user_id}，耗時 {grok_duration:.2f} 秒。")
 
-# 生成圖片的函數
-def generate_image(prompt):
-    headers = {"Authorization": f"Bearer {GROK_API_KEY}", "Content-Type": "application/json"}
-    data = {"model": "grok-2-image-1212", "prompt": prompt}
-    try:
-        response = requests.post(GROK_IMAGE_API_URL, headers=headers, json=data, timeout=20)
-        response.raise_for_status()
-        return response.json()["data"][0]["url"]
-    except requests.RequestException as e:
-        app.logger.error(f"Image generation error: {e}")
-        return f"錯誤：無法生成圖片 - {e}"
+        except RateLimitError:
+            app.logger.warning(f"Grok 達到速率限制 for user {user_id}")
+            grok_response = "抱歉，我的大腦有點過熱，請稍等一下再問我。"
+        except APIConnectionError:
+            app.logger.error(f"Grok 連接錯誤 for user {user_id}")
+            grok_response = "抱歉，我現在連不上我的 AI 大腦，請稍後再試。"
+        except Timeout:
+            app.logger.warning(f"Grok 呼叫超時 for user {user_id}")
+            grok_response = "抱歉，我想得有點久，可以換個問題或稍後再試嗎？"
+        except Exception as e:
+            app.logger.error(f"Grok API 未知錯誤 for user {user_id}: {e}", exc_info=True)
+            # 維持預設錯誤訊息
 
-# 檢查是否為圖片生成請求
-def is_image_generation_request(message):
-    keywords = ["生成圖片", "畫", "圖片", "繪製", "create image", "draw"]
-    return any(keyword in message.lower() for keyword in keywords)
+        # 4. 將 Grok 回應加入歷史
+        history.append({"role": "assistant", "content": grok_response})
+        # 再次裁剪 (可選)
+        if len(history) > MAX_HISTORY_TURNS * 2:
+             history = history[-(MAX_HISTORY_TURNS * 2):]
 
+        # 5. 將更新後的歷史存回資料庫
+        if conn: # 只有在連接成功時才嘗試儲存
+            try:
+                if conn.closed:
+                    app.logger.warning(f"DB 連接已關閉，無法儲存 user {user_id} 的歷史。重新連接...")
+                    conn = get_db_connection() # 嘗試重新連接
+                    if not conn: raise Exception("無法重新連接資料庫")
+
+                with conn.cursor() as cur:
+                    # 使用 UPSERT
+                    cur.execute("""
+                        INSERT INTO conversation_history (user_id, history)
+                        VALUES (%s, %s)
+                        ON CONFLICT (user_id) DO UPDATE SET history = EXCLUDED.history;
+                    """, (user_id, json.dumps(history))) # 存成 JSON 字串
+                    conn.commit() # 提交變更
+                app.logger.info(f"成功儲存 user {user_id} 的歷史。")
+            except (Exception, psycopg2.DatabaseError) as db_err:
+                app.logger.error(f"儲存 user {user_id} 的 DB 歷史時出錯: {db_err}")
+                if conn and not conn.closed: conn.rollback() # 出錯時回滾
+        else:
+             app.logger.warning("無法連接資料庫，歷史紀錄未儲存。")
+
+        # 6. 使用 Push API 推送回覆給使用者
+        try:
+            push_start_time = time.time()
+            with ApiClient(configuration) as api_client:
+                line_bot_api = MessagingApi(api_client)
+                line_bot_api.push_message(
+                    PushMessageRequest(
+                        to=user_id,
+                        messages=[TextMessage(text=grok_response)]
+                    )
+                )
+            push_duration = time.time() - push_start_time
+            app.logger.info(f"成功推送訊息給 user {user_id}，耗時 {push_duration:.2f} 秒。")
+        except LineBotApiError as e:
+            app.logger.error(f"推送訊息給 user {user_id} 失敗: Status={e.status_code}, Reason={e.reason}, Body={e.body}")
+        except Exception as e:
+             app.logger.error(f"推送訊息給 user {user_id} 時發生未知錯誤: {e}", exc_info=True)
+
+    except Exception as e:
+        # 捕捉整個背景任務中的未知錯誤
+        app.logger.error(f"背景任務處理 user {user_id} 時發生嚴重錯誤: {e}", exc_info=True)
+    finally:
+        # 無論成功或失敗，都要確保關閉資料庫連接
+        if conn and not conn.closed:
+            conn.close()
+            # app.logger.debug(f"資料庫連接已關閉 for user {user_id}")
+        process_duration = time.time() - start_process_time
+        app.logger.info(f"背景任務 for user {user_id} 結束，總耗時 {process_duration:.2f} 秒。")
+
+
+# --- LINE Webhook 主要進入點 ---
 @app.route("/callback", methods=['POST'])
 def callback():
+    """接收來自 LINE 的 Webhook 請求"""
     signature = request.headers['X-Line-Signature']
     body = request.get_data(as_text=True)
-    app.logger.info(f"Request body: {body}")
+    app.logger.info(f"收到來自 LINE 的請求 (Body 前 100 字): {body[:100]}") # 日誌記錄請求
+
     try:
+        # 驗證簽名並處理事件
         handler.handle(body, signature)
     except InvalidSignatureError:
-        app.logger.error("Invalid signature.")
+        app.logger.error("簽名驗證失敗！請檢查 Channel Secret。")
         abort(400)
-    return 'OK'
-
-@handler.add(MessageEvent, message=TextMessage)
-def handle_text_message(event):
-    user_id = event.source.user_id
-    user_message = event.message.text
-    reply_token = event.reply_token
-
-    # 儲存用戶訊息
-    save_message(user_id, user_message, "user")
-
-    # 啟動 Fetch MCP 伺服器（僅在應用啟動時執行一次）
-    if not hasattr(app, 'fetch_mcp_started') or not app.fetch_mcp_started:
-        app.fetch_mcp_started = start_fetch_mcp_server()
-
-    # 檢查是否為查詢歷史問題
-    if is_history_query(user_message):
-        reply = f"你剛剛問：{get_last_question(user_id)}"
-    # 檢查是否為網頁查詢
-    elif is_web_query(user_message):
-        url = user_message.replace("查詢網頁: ", "").strip()
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        reply = loop.run_until_complete(fetch_web_content(url))
-        loop.close()
-    else:
-        # 取得對話歷史
-        conversation_history = get_conversation_history(user_id)
-        conversation_history.append({"role": "user", "content": user_message})
-
-        # 檢查是否為圖片生成請求
-        if is_image_generation_request(user_message):
-            image_url = generate_image(user_message)
-            if "錯誤" in image_url:
-                reply = image_url
-            else:
-                save_message(user_id, "生成了一張圖片", "assistant")
-                try:
-                    line_bot_api.reply_message(reply_token, ImageSendMessage(original_content_url=image_url, preview_image_url=image_url))
-                except LineBotApiError as e:
-                    app.logger.error(f"Failed to reply with image: {e}")
-                return
-        else:
-            # 使用 grok-3-beta 處理所有文字輸入
-            reply = call_grok_api(conversation_history, model="grok-3-beta")
-
-    # 儲存模型回應
-    save_message(user_id, reply, "assistant")
-
-    # 回覆用戶
-    try:
-        line_bot_api.reply_message(reply_token, TextSendMessage(text=reply))
     except LineBotApiError as e:
-        app.logger.error(f"Failed to reply: {e}")
+         app.logger.error(f"處理 Webhook 時發生 LINE API 錯誤: {e.status_code} {e.reason} {e.body}")
+         abort(500) # 返回伺服器錯誤
+    except Exception as e:
+        app.logger.error(f"處理 Webhook 時發生未知錯誤: {e}", exc_info=True)
+        abort(500)
 
-@handler.add(MessageEvent, message=ImageMessage)
-def handle_image_message(event):
+    return 'OK' # 必須返回 'OK' 給 LINE
+
+# --- LINE 訊息事件處理器 ---
+@handler.add(MessageEvent, message=TextMessageContent)
+def handle_message(event):
+    """處理收到的文字訊息事件，啟動背景任務"""
     user_id = event.source.user_id
-    message_id = event.message.id
-    reply_token = event.reply_token
+    user_text = event.message.text
+    app.logger.info(f"收到來自 user {user_id} 的文字訊息，準備啟動背景任務。")
 
-    headers = {"Authorization": f"Bearer {os.environ['LINE_CHANNEL_ACCESS_TOKEN']}"}
-    response = requests.get(f"https://api-data.line.me/v2/bot/message/{message_id}/content", headers=headers)
-    if response.status_code != 200:
-        reply = "錯誤：無法取得圖片內容"
-        save_message(user_id, reply, "assistant")
-        try:
-            line_bot_api.reply_message(reply_token, TextSendMessage(text=reply))
-        except LineBotApiError as e:
-            app.logger.error(f"Failed to reply: {e}")
-        return
+    # 啟動背景執行緒處理，避免阻塞 Webhook 回應
+    thread = Thread(target=process_and_push, args=(user_id, user_text))
+    thread.daemon = True # 設為守護執行緒
+    thread.start()
 
-    image_url = f"https://api-data.line.me/v2/bot/message/{message_id}/content"
-    save_message(user_id, "用戶傳送了一張圖片", "user")
+    # handle_message 不需要返回 'OK'
 
-    conversation_history = get_conversation_history(user_id)
-    conversation_history.append({"role": "user", "content": "請描述這張圖片的內容"})
-    reply = call_grok_api(conversation_history, model="grok-2-vision-1212", image_url=image_url)
+# --- 主程式進入點與初始化 ---
+# Gunicorn 會導入 'app' 這個 Flask 物件，所以初始化放外面
+try:
+    init_db()
+    app.logger.info("資料庫初始化檢查完成。")
+except Exception as e:
+     app.logger.error(f"啟動時資料庫初始化失敗: {e}")
+     # 考慮是否要在這裡退出，如果資料庫是必要的
 
-    save_message(user_id, reply, "assistant")
-
-    try:
-        line_bot_api.reply_message(reply_token, TextSendMessage(text=reply))
-    except LineBotApiError as e:
-        app.logger.error(f"Failed to reply: {e}")
-
+# 只有在本機直接執行 python app.py 時才會運行下面的程式碼
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
+    app.logger.info("以 __main__ 方式啟動 (通常用於本機測試)。")
+    port = int(os.environ.get('PORT', 8080))
+    # debug=False 很重要，避免在生產環境(或模擬環境)使用 debug 模式
+    app.run(host='0.0.0.0', port=port, debug=False)
