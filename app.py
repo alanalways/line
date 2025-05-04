@@ -1,108 +1,269 @@
-==> Cloning from https://github.com/alanalways/line
-==> Checking out commit fc93037aff43ec78ec8e4f47a5bf39bb9415a54c in branch main
-==> Downloading cache...
-==> Transferred 104MB in 7s. Extraction took 4s.
-==> Installing Python version 3.10.14...
-==> Using Python version 3.10.14 via environment variable PYTHON_VERSION
-==> Docs on specifying a Python version: https://render.com/docs/python-version
-==> Using Poetry version 1.7.1 (default)
-==> Docs on specifying a Poetry version: https://render.com/docs/poetry-version
-==> Running build command 'pip install -r requirements.txt'...
-Collecting flask==2.0.1
-  Using cached Flask-2.0.1-py3-none-any.whl (94 kB)
-Collecting werkzeug<3.0,>=2.0
-  Using cached werkzeug-2.3.8-py3-none-any.whl (242 kB)
-Collecting line-bot-sdk==2.3.0
-  Using cached line_bot_sdk-2.3.0-py2.py3-none-any.whl (88 kB)
-Collecting groq==0.9.0
-  Downloading groq-0.9.0-py3-none-any.whl (103 kB)
-     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 103.5/103.5 kB 4.2 MB/s eta 0:00:00
-Collecting psycopg2-binary
-  Using cached psycopg2_binary-2.9.10-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (3.0 MB)
-Collecting python-dotenv>=1.0.0
-  Using cached python_dotenv-1.1.0-py3-none-any.whl (20 kB)
-Collecting gunicorn
-  Using cached gunicorn-23.0.0-py3-none-any.whl (85 kB)
-Collecting click>=7.1.2
-  Using cached click-8.1.8-py3-none-any.whl (98 kB)
-Collecting itsdangerous>=2.0
-  Using cached itsdangerous-2.2.0-py3-none-any.whl (16 kB)
-Collecting Jinja2>=3.0
-  Using cached jinja2-3.1.6-py3-none-any.whl (134 kB)
-Collecting requests>=2.0
-  Using cached requests-2.32.3-py3-none-any.whl (64 kB)
-Collecting aiohttp>=3.7.4
-  Using cached aiohttp-3.11.18-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (1.6 MB)
-Collecting future
-  Using cached future-1.0.0-py3-none-any.whl (491 kB)
-Collecting sniffio
-  Using cached sniffio-1.3.1-py3-none-any.whl (10 kB)
-Collecting httpx<1,>=0.23.0
-  Using cached httpx-0.28.1-py3-none-any.whl (73 kB)
-Collecting pydantic<3,>=1.9.0
-  Using cached pydantic-2.11.4-py3-none-any.whl (443 kB)
-Collecting distro<2,>=1.7.0
-  Using cached distro-1.9.0-py3-none-any.whl (20 kB)
-Collecting anyio<5,>=3.5.0
-  Using cached anyio-4.9.0-py3-none-any.whl (100 kB)
-Collecting typing-extensions<5,>=4.7
-  Using cached typing_extensions-4.13.2-py3-none-any.whl (45 kB)
-Collecting MarkupSafe>=2.1.1
-  Using cached MarkupSafe-3.0.2-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (20 kB)
-Collecting packaging
-  Using cached packaging-25.0-py3-none-any.whl (66 kB)
-Collecting multidict<7.0,>=4.5
-  Using cached multidict-6.4.3-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (219 kB)
-Collecting async-timeout<6.0,>=4.0
-  Using cached async_timeout-5.0.1-py3-none-any.whl (6.2 kB)
-Collecting aiohappyeyeballs>=2.3.0
-  Using cached aiohappyeyeballs-2.6.1-py3-none-any.whl (15 kB)
-Collecting yarl<2.0,>=1.17.0
-  Using cached yarl-1.20.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (333 kB)
-Collecting attrs>=17.3.0
-  Using cached attrs-25.3.0-py3-none-any.whl (63 kB)
-Collecting frozenlist>=1.1.1
-  Using cached frozenlist-1.6.0-cp310-cp310-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl (287 kB)
-Collecting propcache>=0.2.0
-  Using cached propcache-0.3.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (206 kB)
-Collecting aiosignal>=1.1.2
-  Using cached aiosignal-1.3.2-py2.py3-none-any.whl (7.6 kB)
-Collecting idna>=2.8
-  Using cached idna-3.10-py3-none-any.whl (70 kB)
-Collecting exceptiongroup>=1.0.2
-  Using cached exceptiongroup-1.2.2-py3-none-any.whl (16 kB)
-Collecting httpcore==1.*
-  Using cached httpcore-1.0.9-py3-none-any.whl (78 kB)
-Collecting certifi
-  Using cached certifi-2025.4.26-py3-none-any.whl (159 kB)
-Collecting h11>=0.16
-  Using cached h11-0.16.0-py3-none-any.whl (37 kB)
-Collecting typing-inspection>=0.4.0
-  Using cached typing_inspection-0.4.0-py3-none-any.whl (14 kB)
-Collecting pydantic-core==2.33.2
-  Using cached pydantic_core-2.33.2-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.0 MB)
-Collecting annotated-types>=0.6.0
-  Using cached annotated_types-0.7.0-py3-none-any.whl (13 kB)
-Collecting charset-normalizer<4,>=2
-  Using cached charset_normalizer-3.4.2-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (149 kB)
-Collecting urllib3<3,>=1.21.1
-  Using cached urllib3-2.4.0-py3-none-any.whl (128 kB)
-Installing collected packages: urllib3, typing-extensions, sniffio, python-dotenv, psycopg2-binary, propcache, packaging, MarkupSafe, itsdangerous, idna, h11, future, frozenlist, exceptiongroup, distro, click, charset-normalizer, certifi, attrs, async-timeout, annotated-types, aiohappyeyeballs, werkzeug, typing-inspection, requests, pydantic-core, multidict, Jinja2, httpcore, gunicorn, anyio, aiosignal, yarl, pydantic, httpx, flask, groq, aiohttp, line-bot-sdk
-Successfully installed Jinja2-3.1.6 MarkupSafe-3.0.2 aiohappyeyeballs-2.6.1 aiohttp-3.11.18 aiosignal-1.3.2 annotated-types-0.7.0 anyio-4.9.0 async-timeout-5.0.1 attrs-25.3.0 certifi-2025.4.26 charset-normalizer-3.4.2 click-8.1.8 distro-1.9.0 exceptiongroup-1.2.2 flask-2.0.1 frozenlist-1.6.0 future-1.0.0 groq-0.9.0 gunicorn-23.0.0 h11-0.16.0 httpcore-1.0.9 httpx-0.28.1 idna-3.10 itsdangerous-2.2.0 line-bot-sdk-2.3.0 multidict-6.4.3 packaging-25.0 propcache-0.3.1 psycopg2-binary-2.9.10 pydantic-2.11.4 pydantic-core-2.33.2 python-dotenv-1.1.0 requests-2.32.3 sniffio-1.3.1 typing-extensions-4.13.2 typing-inspection-0.4.0 urllib3-2.4.0 werkzeug-2.3.8 yarl-1.20.0
-WARNING: There was an error checking the latest version of pip.
-==> Uploading build...
-==> Uploaded in 6.6s. Compression took 55.0s
-==> Build successful 🎉
-==> Deploying...
-==> Running 'gunicorn app:app --timeout 120 --log-level info'
-[2025-05-04 15:31:22,072] INFO in app: Line Bot SDK v2 初始化成功。
-[2025-05-04 15:31:22,073] ERROR in app: 無法初始化 Groq client: Client.__init__() got an unexpected keyword argument 'proxies'
-==> Running 'gunicorn app:app --timeout 120 --log-level info'
-[2025-05-04 15:31:37,361] INFO in app: Line Bot SDK v2 初始化成功。
-[2025-05-04 15:31:37,361] ERROR in app: 無法初始化 Groq client: Client.__init__() got an unexpected keyword argument 'proxies'
-==> No open ports detected, continuing to scan...
-==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
-==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
-==> Running 'gunicorn app:app --timeout 120 --log-level info'
-[2025-05-04 15:32:03,816] INFO in app: Line Bot SDK v2 初始化成功。
-[2025-05-04 15:32:03,816] ERROR in app: 無法初始化 Groq client: Client.__init__() got an unexpected keyword argument 'proxies'
+import os
+import time
+import json
+import psycopg2
+import logging
+from flask import Flask, request, abort
+
+from linebot import LineBotApi, WebhookHandler
+from linebot.exceptions import InvalidSignatureError, LineBotApiError
+from linebot.models import MessageEvent, TextMessage, TextSendMessage
+
+from dotenv import load_dotenv
+from groq import Groq, Timeout, APIConnectionError, RateLimitError
+from threading import Thread
+import httpx # <--- 加入 httpx 導入
+
+# --- 載入環境變數 ---
+load_dotenv()
+
+app = Flask(__name__)
+# --- 設定日誌記錄器 ---
+app.logger.setLevel(logging.INFO)
+
+# --- 設定 ---
+channel_access_token = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
+channel_secret = os.getenv('LINE_CHANNEL_SECRET')
+grok_api_key = os.getenv('GROK_API_KEY')
+DATABASE_URL = os.getenv('DATABASE_URL')
+
+if not all([channel_access_token, channel_secret, grok_api_key]):
+    app.logger.error("錯誤：LINE Token 或 Grok API Key 未設定！")
+    exit()
+if not DATABASE_URL:
+    app.logger.error("錯誤：DATABASE_URL 未設定！請在 Render 連接資料庫。")
+    exit()
+
+# --- v2 SDK 初始化 ---
+try:
+    line_bot_api = LineBotApi(channel_access_token)
+    handler = WebhookHandler(channel_secret)
+    app.logger.info("Line Bot SDK v2 初始化成功。")
+except Exception as e:
+    app.logger.error(f"無法初始化 Line Bot SDK: {e}")
+    exit()
+
+# --- Groq Client 初始化 (手動配置 httpx) ---
+try:
+    # 1. 手動建立一個 httpx AsyncClient，明確指定不使用代理
+    #    Groq SDK 內部似乎使用異步客戶端，所以我們用 AsyncClient
+    custom_http_client = httpx.AsyncClient(
+        proxies=None, # <--- 明確設定 proxies 為 None
+        verify=True,  # <--- 啟用 SSL 驗證 (通常是預設且推薦)
+        timeout=httpx.Timeout(60.0, connect=10.0) # 設定超時 (60秒讀取, 10秒連接)
+    )
+    app.logger.info("已手動建立 httpx.AsyncClient (proxies=None)。")
+
+    # 2. 將這個自訂的客戶端傳遞給 Groq 初始化
+    groq_client = Groq(
+        api_key=grok_api_key,
+        http_client=custom_http_client # <--- 關鍵：傳入自訂的 http_client
+    )
+    app.logger.info("Groq client 使用自訂 http_client 初始化成功。")
+
+except Exception as e:
+    # 使用 exc_info=True 記錄更詳細的錯誤堆疊
+    app.logger.error(f"無法初始化 Groq client: {e}", exc_info=True)
+    exit() # 初始化失敗則退出
+
+# 對話記憶設定 (不變)
+MAX_HISTORY_TURNS = 5
+
+# --- 資料庫輔助函數 ---
+# (get_db_connection 和 init_db 函數保持不變)
+def get_db_connection():
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        conn.set_client_encoding('UTF8')
+        return conn
+    except Exception as e:
+        app.logger.error(f"資料庫連接失敗: {e}")
+        return None
+
+def init_db():
+    sql = """
+    CREATE TABLE IF NOT EXISTS conversation_history (
+        user_id TEXT PRIMARY KEY,
+        history JSONB
+    );
+    """
+    conn = get_db_connection()
+    if not conn:
+        app.logger.error("無法初始化資料庫 (無連接)。")
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            conn.commit()
+        app.logger.info("資料庫資料表 'conversation_history' 檢查/建立 完成。")
+    except Exception as e:
+        app.logger.error(f"無法初始化資料庫資料表: {e}")
+        if conn: conn.rollback()
+    finally:
+        if conn and not conn.closed: conn.close()
+
+# --- 背景處理函數 (核心邏輯) ---
+# (process_and_push 函數保持不變)
+def process_and_push(user_id, event):
+    user_text = event.message.text
+    app.logger.info(f"開始背景處理 user {user_id} 的訊息: '{user_text[:50]}...'")
+    start_process_time = time.time()
+    conn = None
+    history = []
+
+    try:
+        # 1. 從資料庫讀取歷史紀錄 (不變)
+        conn = get_db_connection()
+        if conn:
+             try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT history FROM conversation_history WHERE user_id = %s;", (user_id,))
+                    result = cur.fetchone()
+                    if result and result[0]:
+                        history = json.loads(result[0])
+                        app.logger.info(f"成功載入 user {user_id} 的歷史，長度: {len(history)}")
+                    else:
+                         app.logger.info(f"無 user {user_id} 的歷史紀錄。")
+             except (Exception, psycopg2.DatabaseError) as db_err:
+                app.logger.error(f"讀取 user {user_id} 的 DB 歷史時出錯: {db_err}")
+                history = []
+                if conn and not conn.closed: conn.rollback()
+        else:
+             app.logger.warning("無法連接資料庫，將不使用歷史紀錄。")
+
+        # 將新訊息加入歷史 (不變)
+        history.append({"role": "user", "content": user_text})
+        if len(history) > MAX_HISTORY_TURNS * 2:
+            history = history[-(MAX_HISTORY_TURNS * 2):]
+
+        # 2. 準備呼叫 Grok (不變)
+        prompt_messages = history.copy()
+        grok_response = "抱歉，系統發生錯誤，請稍後再試。"
+
+        # 3. 呼叫 Grok API (不變)
+        try:
+            grok_start_time = time.time()
+            app.logger.info(f"準備呼叫 Grok API (model: grok-3-mini-beta) for user {user_id}...")
+            chat_completion = groq_client.chat.completions.create(
+                messages=prompt_messages,
+                model="grok-3-mini-beta",
+                temperature=0.7,
+                max_tokens=1500,
+                # 注意：因為我們傳入了 http_client，這裡的 timeout 參數可能不會生效，以 http_client 設定的為準
+                # timeout=Timeout(read=60.0) # 保留或移除皆可，優先級可能較低
+            )
+            grok_response = chat_completion.choices[0].message.content.strip()
+            grok_duration = time.time() - grok_start_time
+            app.logger.info(f"Grok API 呼叫成功 for user {user_id}，耗時 {grok_duration:.2f} 秒。")
+
+        # ... (省略 Grok API 錯誤處理，與之前版本相同) ...
+        except RateLimitError:
+             app.logger.warning(f"Grok 達到速率限制 for user {user_id}")
+             grok_response = "抱歉，我的大腦有點過熱，請稍等一下再問我。"
+        except APIConnectionError:
+             app.logger.error(f"Grok 連接錯誤 for user {user_id}")
+             grok_response = "抱歉，我現在連不上我的 AI 大腦，請稍後再試。"
+        except Timeout: # Timeout 可能來自 httpx 或 Groq SDK 內部，保留捕捉
+             app.logger.warning(f"Grok 呼叫超時 for user {user_id}")
+             grok_response = "抱歉，我想得有點久，可以試著換個問法或稍後再試嗎？"
+        except Exception as e:
+             app.logger.error(f"Grok API 未知錯誤 for user {user_id}: {e}", exc_info=True)
+
+
+        # 4. 將 Grok 回應加入歷史 (不變)
+        history.append({"role": "assistant", "content": grok_response})
+        if len(history) > MAX_HISTORY_TURNS * 2:
+             history = history[-(MAX_HISTORY_TURNS * 2):]
+
+        # 5. 將更新後的歷史存回資料庫 (不變)
+        if conn:
+            # ... (省略 DB 儲存程式碼，與之前版本相同) ...
+             try:
+                if conn.closed:
+                    app.logger.warning(f"DB 連接已關閉，無法儲存 user {user_id} 的歷史。嘗試重新連接...")
+                    conn = get_db_connection()
+                    if not conn: raise Exception("無法重新連接資料庫")
+
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO conversation_history (user_id, history)
+                        VALUES (%s, %s)
+                        ON CONFLICT (user_id) DO UPDATE SET history = EXCLUDED.history;
+                    """, (user_id, json.dumps(history)))
+                    conn.commit()
+                app.logger.info(f"成功儲存 user {user_id} 的歷史。")
+             except (Exception, psycopg2.DatabaseError) as db_err:
+                app.logger.error(f"儲存 user {user_id} 的 DB 歷史時出錯: {db_err}")
+                if conn and not conn.closed: conn.rollback()
+        else:
+             app.logger.warning("無法連接資料庫，歷史紀錄未儲存。")
+
+        # 6. 使用 v2 的 Push API (不變)
+        try:
+            # ... (省略 v2 Push API 程式碼，與之前版本相同) ...
+            push_start_time = time.time()
+            line_bot_api.push_message(
+                user_id,
+                messages=TextSendMessage(text=grok_response)
+            )
+            push_duration = time.time() - push_start_time
+            app.logger.info(f"成功推送訊息給 user {user_id}，耗時 {push_duration:.2f} 秒。")
+        except LineBotApiError as e:
+            app.logger.error(f"推送訊息給 user {user_id} 失敗: {e.status_code} {e.error.message} {e.error.details}")
+        except Exception as e:
+             app.logger.error(f"推送訊息給 user {user_id} 時發生未知錯誤: {e}", exc_info=True)
+
+
+    except Exception as e:
+        app.logger.error(f"背景任務處理 user {user_id} 時發生嚴重錯誤: {e}", exc_info=True)
+    finally:
+        if conn and not conn.closed:
+            conn.close()
+        process_duration = time.time() - start_process_time
+        app.logger.info(f"背景任務 for user {user_id} 結束，總耗時 {process_duration:.2f} 秒。")
+
+
+# --- LINE Webhook 主要進入點 ---
+# (callback 函數保持不變)
+@app.route("/callback", methods=['POST'])
+def callback():
+    signature = request.headers['X-Line-Signature']
+    body = request.get_data(as_text=True)
+    app.logger.info(f"收到來自 LINE 的請求 (Body 前 100 字): {body[:100]}")
+    try:
+        handler.handle(body, signature)
+    except InvalidSignatureError:
+        app.logger.error("簽名驗證失敗！請檢查 Channel Secret。")
+        abort(400)
+    except LineBotApiError as e:
+        app.logger.error(f"處理 Webhook 時發生 LINE API 錯誤: {e.status_code} {e.error.message} {e.error.details}")
+        abort(500)
+    except Exception as e:
+        app.logger.error(f"處理 Webhook 時發生未知錯誤: {e}", exc_info=True)
+        abort(500)
+    return 'OK'
+
+# --- LINE 訊息事件處理器 ---
+# (handle_message 函數保持不變)
+@handler.add(MessageEvent, message=TextMessage)
+def handle_message(event):
+    user_id = event.source.user_id
+    app.logger.info(f"收到來自 user {user_id} 的文字訊息，準備啟動背景任務。")
+    thread = Thread(target=process_and_push, args=(user_id, event))
+    thread.daemon = True
+    thread.start()
+
+# --- 主程式進入點與初始化 ---
+# (這部分不變)
+try:
+    init_db()
+    app.logger.info("資料庫初始化檢查完成。")
+except Exception as e:
+     app.logger.error(f"啟動時資料庫初始化失敗: {e}")
+
+if __name__ == "__main__":
+    app.logger.info("以 __main__ 方式啟動 (通常用於本機測試)。")
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port, debug=False)
+else:
+    app.logger.info("Flask 應用程式 (透過 Gunicorn 或其他 WSGI 伺服器) 啟動。")
