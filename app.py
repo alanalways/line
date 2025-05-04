@@ -20,9 +20,11 @@ GROK_API_KEY = os.environ['GROK_API_KEY']
 GROK_API_URL = "https://api.x.ai/v1/chat/completions"
 GROK_IMAGE_API_URL = "https://api.x.ai/v1/image/generations"
 
-# 初始化記憶體 SQLite 資料庫（全局）
+# 初始化 SQLite 資料庫（使用檔案）
+DB_PATH = "conversations.db"
+
 def init_db():
-    conn = sqlite3.connect(':memory:')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS conversations
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,7 +40,7 @@ init_db()
 
 # 儲存對話到資料庫
 def save_message(user_id, message, role):
-    conn = sqlite3.connect(':memory:')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("INSERT INTO conversations (user_id, message, role) VALUES (?, ?, ?)", (user_id, message, role))
     conn.commit()
@@ -46,7 +48,7 @@ def save_message(user_id, message, role):
 
 # 取得對話歷史
 def get_conversation_history(user_id, limit=10):
-    conn = sqlite3.connect(':memory:')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT role, message FROM conversations WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?", (user_id, limit))
     history = c.fetchall()
@@ -84,16 +86,21 @@ def call_grok_api(messages, model, image_url=None):
         "Authorization": f"Bearer {GROK_API_KEY}",
         "Content-Type": "application/json"
     }
+    # 根據是否有圖片輸入，調整 messages 格式
+    if image_url and model == "grok-2-vision-1212":
+        messages.append({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": messages[-1]["content"]},
+                {"type": "image_url", "image_url": {"url": image_url}}
+            ]
+        })
+        messages[-2]["content"] = messages[-2]["content"]  # 移除最後一條純文字訊息的 content
     data = {
         "model": model,
         "messages": messages,
         "max_tokens": 1000
     }
-    if image_url and model == "grok-2-vision-1212":
-        data["messages"].append({
-            "role": "user",
-            "content": [{"type": "image_url", "image_url": {"url": image_url}}]
-        })
     try:
         response = requests.post(GROK_API_URL, headers=headers, json=data)
         response.raise_for_status()
@@ -173,6 +180,7 @@ def handle_image_message(event):
     response = requests.get(f"https://api-data.line.me/v2/bot/message/{message_id}/content", headers=headers)
     if response.status_code != 200:
         reply = "錯誤：無法取得圖片內容"
+        save_message(user_id, reply, "assistant")
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
         return
 
