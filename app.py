@@ -3,17 +3,14 @@ import time
 import json
 import psycopg2
 import logging
+import httpx
 from flask import Flask, request, abort
-
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError, LineBotApiError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
-
 from dotenv import load_dotenv
-from groq import Groq, RateLimitError, APIConnectionError
-from groq.exceptions import APITimeoutError  # 修正異常類型
+from groq import Groq, RateLimitError, APIConnectionError, AuthenticationError
 from threading import Thread
-import httpx
 
 # --- 載入環境變數 ---
 load_dotenv()
@@ -36,7 +33,7 @@ if not DATABASE_URL:
 try:
     line_bot_api = LineBotApi(channel_access_token)
     handler = WebhookHandler(channel_secret)
-    app.logger.info("Line Bot SDK v2 初始化成功。")
+    app.logger.info("Line Bot SDK v3 初始化成功。")
 except Exception as e:
     app.logger.error(f"無法初始化 Line Bot SDK: {e}")
     exit()
@@ -47,7 +44,6 @@ try:
         timeout=httpx.Timeout(60.0, connect=10.0)
     )
     app.logger.info("已手動建立 httpx.Client。")
-
     groq_client = Groq(
         api_key=grok_api_key,
         http_client=custom_http_client
@@ -90,6 +86,17 @@ def init_db():
     finally:
         if conn and not conn.closed: conn.close()
 
+async def fetch_web_content(url):
+    """從指定 URL 獲取網頁內容"""
+    try:
+        async with httpx.AsyncClient(verify=True, timeout=10.0) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            return response.text[:2000]  # 限制內容長度以避免過長
+    except Exception as e:
+        app.logger.error(f"獲取網頁內容失敗: {e}")
+        return f"無法獲取網頁內容：{str(e)}"
+
 def process_and_push(user_id, event):
     user_text = event.message.text
     app.logger.info(f"開始處理 user {user_id} 的訊息: '{user_text[:50]}...'")
@@ -114,6 +121,19 @@ def process_and_push(user_id, event):
                 history = []
                 if conn and not conn.closed: conn.rollback()
 
+        # 檢查是否為網頁查詢請求
+        web_content = None
+        if user_text.startswith("查詢："):
+            url = user_text[3:].strip()
+            if url:
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                web_content = loop.run_until_complete(fetch_web_content(url))
+                loop.close()
+                if web_content and not web_content.startswith("無法獲取"):
+                    user_text = f"請根據以下網頁內容回答問題或提供總結：\n{web_content[:1000]}"
+
         history.append({"role": "user", "content": user_text})
         if len(history) > MAX_HISTORY_TURNS * 2:
             history = history[-(MAX_HISTORY_TURNS * 2):]
@@ -135,11 +155,11 @@ def process_and_push(user_id, event):
             grok_response = "大腦過熱，請稍後再試。"
             app.logger.warning("Grok API 速率限制觸發。")
         except APIConnectionError:
-            grok_response = "AI 無法連線，請稍後再試。"
-            app.logger.error("Grok API 連線失敗。")
-        except APITimeoutError:  # 修正為正確的異常類型
-            grok_response = "思考過久，請換個問法或稍後再試。"
-            app.logger.error("Grok API 請求超時。")
+            grok_response = "AI 無法連線或請求超時，請稍後再試。"
+            app.logger.error("Grok API 連線或超時錯誤。")
+        except AuthenticationError:
+            grok_response = "API 金鑰驗證失敗，請聯繫管理員。"
+            app.logger.error("Grok API 認證錯誤。")
         except Exception as e:
             grok_response = "系統錯誤，請稍後再試。"
             app.logger.error(f"Grok API 錯誤: {type(e).__name__}: {e}", exc_info=True)
