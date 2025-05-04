@@ -19,18 +19,23 @@ GROK_API_KEY = os.environ['GROK_API_KEY']
 GROK_API_URL = "https://api.x.ai/v1/chat/completions"
 GROK_IMAGE_API_URL = "https://api.x.ai/v1/image/generations"
 
-# 初始化 SQLite 資料庫
+# 初始化 SQLite 資料庫（記憶體模式）
 def init_db():
-    conn = sqlite3.connect('/app/data/conversation.db')  # Render 持久化路徑
+    conn = sqlite3.connect(':memory:')  # 使用記憶體資料庫
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS conversations
-                 (user_id TEXT, message TEXT, role TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+    # 增加 `id` 作為主鍵，並確保 `user_id` 和 `message` 不為空
+    c.execute('''CREATE TABLE conversations
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  user_id TEXT NOT NULL,
+                  message TEXT NOT NULL,
+                  role TEXT NOT NULL,
+                  timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     conn.commit()
     conn.close()
 
 # 儲存對話到資料庫
 def save_message(user_id, message, role):
-    conn = sqlite3.connect('/app/data/conversation.db')
+    conn = sqlite3.connect(':memory:')
     c = conn.cursor()
     c.execute("INSERT INTO conversations (user_id, message, role) VALUES (?, ?, ?)", (user_id, message, role))
     conn.commit()
@@ -38,7 +43,7 @@ def save_message(user_id, message, role):
 
 # 取得對話歷史
 def get_conversation_history(user_id, limit=10):
-    conn = sqlite3.connect('/app/data/conversation.db')
+    conn = sqlite3.connect(':memory:')
     c = conn.cursor()
     c.execute("SELECT role, message FROM conversations WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?", (user_id, limit))
     history = c.fetchall()
@@ -147,6 +152,14 @@ def handle_image_message(event):
     message_id = event.message.id
 
     # 取得圖片內容
+    headers = {"Authorization": f"Bearer {os.environ['LINE_CHANNEL_ACCESS_TOKEN']}"}
+    response = requests.get(f"https://api-data.line.me/v2/bot/message/{message_id}/content", headers=headers)
+    if response.status_code != 200:
+        reply = "錯誤：無法取得圖片內容"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
+        return
+
+    # 假設圖片需要上傳到公開儲存（這裡簡化為直接使用 URL）
     image_url = f"https://api-data.line.me/v2/bot/message/{message_id}/content"
 
     # 儲存用戶圖片訊息
