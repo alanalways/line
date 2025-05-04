@@ -57,12 +57,14 @@ def get_conversation_history(user_id, limit=10):
     history = c.fetchall()
     conn.close()
     history.reverse()
+    app.logger.info(f"Conversation history for {user_id}: {history}")
     return [{"role": row[0], "content": row[1]} for row in history]
 
 # 檢查是否為簡單數學運算
 def is_simple_math(message):
     pattern = r'^\s*(\d+)\s*([+\-*/])\s*(\d+)\s*(等於多少)?\s*$|^\s*(\d+)\s*([+\-*/])\s*(\d+)\s*$'
     match = re.match(pattern, message.strip())
+    app.logger.info(f"Checking math pattern for '{message}': {match}")
     return match
 
 # 計算簡單數學運算
@@ -74,6 +76,7 @@ def calculate_simple_math(message):
     num1 = int(groups[0] if groups[0] else groups[4])
     num2 = int(groups[2] if groups[2] else groups[6])
     operator = groups[1] if groups[1] else groups[5]
+    app.logger.info(f"Calculating: {num1} {operator} {num2}")
     if operator == '+':
         return str(num1 + num2)
     elif operator == '-':
@@ -91,6 +94,7 @@ def is_history_query(message):
 # 從歷史中提取上一個問題
 def get_last_question(user_id):
     history = get_conversation_history(user_id, limit=2)
+    app.logger.info(f"Last question history: {history}")
     if len(history) >= 2 and history[1]["role"] == "user":
         return history[1]["content"]
     return "我沒有記錄到你的上一個問題。"
@@ -98,22 +102,23 @@ def get_last_question(user_id):
 # 啟動 Fetch MCP 伺服器
 def start_fetch_mcp_server():
     try:
-        # 假設使用 uvx 啟動 Fetch MCP 伺服器
         subprocess.Popen(["uvx", "mcp-server-fetch"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        app.logger.info("Fetch MCP server started successfully")
         return True
     except Exception as e:
-        print(f"啟動 Fetch MCP 伺服器失敗: {e}")
+        app.logger.error(f"Failed to start Fetch MCP server: {e}")
         return False
 
 # 調用 Fetch MCP 獲取網頁內容
 async def fetch_web_content(url):
     try:
-        # 這裡模擬與 Fetch MCP 伺服器的通訊，實際需要根據 MCP 協議實現
-        # 假設 Fetch MCP 提供一個簡單的 HTTP 接口
-        response = requests.post("http://localhost:3000/fetch", json={"url": url, "max_length": 5000})
+        response = requests.post("http://localhost:3000/fetch", json={"url": url, "max_length": 5000}, timeout=10)
         response.raise_for_status()
-        return response.json().get("content", "無法獲取網頁內容")
+        content = response.json().get("content", "無法獲取網頁內容")
+        app.logger.info(f"Fetched web content from {url}: {content[:100]}...")
+        return content
     except Exception as e:
+        app.logger.error(f"Failed to fetch web content from {url}: {e}")
         return f"獲取網頁內容失敗: {e}"
 
 # 檢查是否為網頁查詢
@@ -130,8 +135,11 @@ def call_grok_api(messages, model, image_url=None):
     try:
         response = requests.post(GROK_API_URL, headers=headers, json=data, timeout=10)
         response.raise_for_status()
-        return response.json()['choices'][0]['message']['content']
+        reply = response.json()['choices'][0]['message']['content']
+        app.logger.info(f"Grok API response: {reply}")
+        return reply
     except requests.RequestException as e:
+        app.logger.error(f"Grok API error: {e}")
         return f"錯誤：無法連接到 xAI API - {e}"
 
 # 生成圖片的函數
@@ -143,6 +151,7 @@ def generate_image(prompt):
         response.raise_for_status()
         return response.json()["data"][0]["url"]
     except requests.RequestException as e:
+        app.logger.error(f"Image generation error: {e}")
         return f"錯誤：無法生成圖片 - {e}"
 
 # 檢查是否為圖片生成請求
@@ -154,9 +163,11 @@ def is_image_generation_request(message):
 def callback():
     signature = request.headers['X-Line-Signature']
     body = request.get_data(as_text=True)
+    app.logger.info(f"Request body: {body}")
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
+        app.logger.error("Invalid signature.")
         abort(400)
     return 'OK'
 
@@ -171,8 +182,7 @@ def handle_text_message(event):
 
     # 啟動 Fetch MCP 伺服器（僅在應用啟動時執行一次）
     if not hasattr(app, 'fetch_mcp_started') or not app.fetch_mcp_started:
-        start_fetch_mcp_server()
-        app.fetch_mcp_started = True
+        app.fetch_mcp_started = start_fetch_mcp_server()
 
     # 檢查是否為簡單數學運算
     math_result = calculate_simple_math(user_message)
@@ -187,6 +197,7 @@ def handle_text_message(event):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         reply = loop.run_until_complete(fetch_web_content(url))
+        loop.close()
     else:
         # 取得對話歷史
         conversation_history = get_conversation_history(user_id)
@@ -212,7 +223,7 @@ def handle_text_message(event):
     try:
         line_bot_api.reply_message(reply_token, TextSendMessage(text=reply))
     except Exception as e:
-        print(f"Failed to reply: {e}")
+        app.logger.error(f"Failed to reply: {e}")
 
 @handler.add(MessageEvent, message=ImageMessage)
 def handle_image_message(event):
@@ -240,7 +251,7 @@ def handle_image_message(event):
     try:
         line_bot_api.reply_message(reply_token, TextSendMessage(text=reply))
     except Exception as e:
-        print(f"Failed to reply: {e}")
+        app.logger.error(f"Failed to reply: {e}")
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
