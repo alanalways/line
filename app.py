@@ -1,15 +1,14 @@
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
-from linebot.exceptions import InvalidSignatureError
+from linebot.exceptions import InvalidSignatureError, LineBotApiError
 from linebot.models import MessageEvent, TextMessage, ImageMessage, TextSendMessage, ImageSendMessage
 import os
 import requests
 import json
 import sqlite3
 from datetime import datetime
-import re  # 用於簡單數學運算檢查
-import subprocess  # 用於啟動 Fetch MCP 伺服器
 import asyncio
+import time
 
 app = Flask(__name__)
 
@@ -59,33 +58,6 @@ def get_conversation_history(user_id, limit=10):
     app.logger.info(f"Conversation history for {user_id}: {history}")
     return [{"role": row[0], "content": row[1]} for row in history]
 
-# 檢查是否為簡單數學運算
-def is_simple_math(message):
-    pattern = r'^\s*(\d+)\s*([+\-*/])\s*(\d+)\s*(等於多少)?\s*$|^\s*(\d+)\s*([+\-*/])\s*(\d+)\s*$'
-    match = re.match(pattern, message.strip())
-    app.logger.info(f"Checking math pattern for '{message}': {match}")
-    return match
-
-# 計算簡單數學運算
-def calculate_simple_math(message):
-    match = is_simple_math(message)
-    if not match:
-        return None
-    groups = match.groups()
-    num1 = int(groups[0] if groups[0] else groups[4])
-    num2 = int(groups[2] if groups[2] else groups[6])
-    operator = groups[1] if groups[1] else groups[5]
-    app.logger.info(f"Calculating: {num1} {operator} {num2}")
-    if operator == '+':
-        return str(num1 + num2)
-    elif operator == '-':
-        return str(num1 - num2)
-    elif operator == '*':
-        return str(num1 * num2)
-    elif operator == '/':
-        return str(num1 / num2) if num2 != 0 else "錯誤：除數不能為 0"
-    return None
-
 # 檢查是否為查詢歷史問題
 def is_history_query(message):
     return message.strip() in ["我剛剛問什麼", "我之前問了什麼"]
@@ -93,7 +65,6 @@ def is_history_query(message):
 # 從歷史中提取上一個問題
 def get_last_question(user_id):
     history = get_conversation_history(user_id, limit=2)
-    app.logger.info(f"Last question history: {history}")
     if len(history) >= 2 and history[1]["role"] == "user":
         return history[1]["content"]
     return "我沒有記錄到你的上一個問題。"
@@ -101,9 +72,14 @@ def get_last_question(user_id):
 # 啟動 Fetch MCP 伺服器
 def start_fetch_mcp_server():
     try:
-        subprocess.Popen(["uvx", "mcp-server-fetch"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # 直接使用 Python 模組啟動 Fetch MCP
+        from mcp_server_fetch import run
+        run(port=3000)  # 假設模組提供 run 函數，端口設為 3000
         app.logger.info("Fetch MCP server started successfully")
         return True
+    except ImportError as e:
+        app.logger.error(f"Failed to start Fetch MCP server: {e}")
+        return False
     except Exception as e:
         app.logger.error(f"Failed to start Fetch MCP server: {e}")
         return False
@@ -124,29 +100,33 @@ async def fetch_web_content(url):
 def is_web_query(message):
     return message.strip().startswith("查詢網頁: ")
 
-# 調用 Grok API 的通用函數
-def call_grok_api(messages, model, image_url=None):
+# 調用 Grok API 的通用函數（添加重試機制）
+def call_grok_api(messages, model, image_url=None, retries=1, timeout=20):
     headers = {"Authorization": f"Bearer {GROK_API_KEY}", "Content-Type": "application/json"}
     if image_url and model == "grok-2-vision-1212":
         messages.append({"role": "user", "content": [{"type": "text", "text": messages[-1]["content"]}, {"type": "image_url", "image_url": {"url": image_url}}]})
         messages[-2]["content"] = messages[-2]["content"]
     data = {"model": model, "messages": messages, "max_tokens": 500}
-    try:
-        response = requests.post(GROK_API_URL, headers=headers, json=data, timeout=10)
-        response.raise_for_status()
-        reply = response.json()['choices'][0]['message']['content']
-        app.logger.info(f"Grok API response: {reply}")
-        return reply
-    except requests.RequestException as e:
-        app.logger.error(f"Grok API error: {e}")
-        return f"錯誤：無法連接到 xAI API - {e}"
+    
+    for attempt in range(retries + 1):
+        try:
+            response = requests.post(GROK_API_URL, headers=headers, json=data, timeout=timeout)
+            response.raise_for_status()
+            reply = response.json()['choices'][0]['message']['content']
+            app.logger.info(f"Grok API response: {reply}")
+            return reply
+        except requests.RequestException as e:
+            app.logger.error(f"Grok API error (attempt {attempt + 1}/{retries + 1}): {e}")
+            if attempt == retries:
+                return "Grok API 目前無法回應，請稍後再試。"
+            time.sleep(2)  # 等待 2 秒後重試
 
 # 生成圖片的函數
 def generate_image(prompt):
     headers = {"Authorization": f"Bearer {GROK_API_KEY}", "Content-Type": "application/json"}
     data = {"model": "grok-2-image-1212", "prompt": prompt}
     try:
-        response = requests.post(GROK_IMAGE_API_URL, headers=headers, json=data, timeout=10)
+        response = requests.post(GROK_IMAGE_API_URL, headers=headers, json=data, timeout=20)
         response.raise_for_status()
         return response.json()["data"][0]["url"]
     except requests.RequestException as e:
@@ -183,12 +163,8 @@ def handle_text_message(event):
     if not hasattr(app, 'fetch_mcp_started') or not app.fetch_mcp_started:
         app.fetch_mcp_started = start_fetch_mcp_server()
 
-    # 檢查是否為簡單數學運算
-    math_result = calculate_simple_math(user_message)
-    if math_result:
-        reply = f"計算結果：{math_result}"
     # 檢查是否為查詢歷史問題
-    elif is_history_query(user_message):
+    if is_history_query(user_message):
         reply = f"你剛剛問：{get_last_question(user_id)}"
     # 檢查是否為網頁查詢
     elif is_web_query(user_message):
@@ -209,10 +185,13 @@ def handle_text_message(event):
                 reply = image_url
             else:
                 save_message(user_id, "生成了一張圖片", "assistant")
-                line_bot_api.reply_message(reply_token, ImageSendMessage(original_content_url=image_url, preview_image_url=image_url))
+                try:
+                    line_bot_api.reply_message(reply_token, ImageSendMessage(original_content_url=image_url, preview_image_url=image_url))
+                except LineBotApiError as e:
+                    app.logger.error(f"Failed to reply with image: {e}")
                 return
         else:
-            # 使用 grok-3-beta 處理文字，移除 web_search 邏輯
+            # 使用 grok-3-beta 處理所有文字輸入
             reply = call_grok_api(conversation_history, model="grok-3-beta")
 
     # 儲存模型回應
@@ -221,7 +200,7 @@ def handle_text_message(event):
     # 回覆用戶
     try:
         line_bot_api.reply_message(reply_token, TextSendMessage(text=reply))
-    except Exception as e:
+    except LineBotApiError as e:
         app.logger.error(f"Failed to reply: {e}")
 
 @handler.add(MessageEvent, message=ImageMessage)
@@ -235,7 +214,10 @@ def handle_image_message(event):
     if response.status_code != 200:
         reply = "錯誤：無法取得圖片內容"
         save_message(user_id, reply, "assistant")
-        line_bot_api.reply_message(reply_token, TextSendMessage(text=reply))
+        try:
+            line_bot_api.reply_message(reply_token, TextSendMessage(text=reply))
+        except LineBotApiError as e:
+            app.logger.error(f"Failed to reply: {e}")
         return
 
     image_url = f"https://api-data.line.me/v2/bot/message/{message_id}/content"
@@ -249,7 +231,7 @@ def handle_image_message(event):
 
     try:
         line_bot_api.reply_message(reply_token, TextSendMessage(text=reply))
-    except Exception as e:
+    except LineBotApiError as e:
         app.logger.error(f"Failed to reply: {e}")
 
 if __name__ == "__main__":
