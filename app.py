@@ -2,14 +2,18 @@ import os
 import time
 import json
 import psycopg2 # 用於 PostgreSQL
-import logging # <--- 導入標準的 logging 模組
-from flask import Flask, request, abort # <--- 不再從 flask 導入 logging
+import logging # 導入標準的 logging 模組
+from flask import Flask, request, abort # Flask 元件
+
+# v3 SDK 的 import 方式調整：
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi, PushMessageRequest, TextMessage,
     ApiException
 )
-from linebot.v3.webhooks import MessageEvent, TextMessageContent
+# --- 加入 WebhookHandler ---
+from linebot.v3.webhooks import MessageEvent, TextMessageContent, WebhookHandler # <--- 加入 WebhookHandler
+
 from dotenv import load_dotenv
 from groq import Groq, Timeout, APIConnectionError, RateLimitError
 from threading import Thread
@@ -19,8 +23,7 @@ load_dotenv()
 
 app = Flask(__name__)
 # --- 設定日誌記錄器 ---
-# 使用標準 logging 模組來設定等級
-app.logger.setLevel(logging.INFO) # <--- 確保這裡用的是標準 logging.INFO
+app.logger.setLevel(logging.INFO)
 
 # --- 設定 ---
 channel_access_token = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
@@ -38,7 +41,8 @@ if not DATABASE_URL:
 
 # LINE SDK 設定
 configuration = Configuration(access_token=channel_access_token)
-handler = WebhookHandler(channel_secret)
+# 現在可以正確初始化 handler 了
+handler = WebhookHandler(channel_secret) # <--- 現在 WebhookHandler 已被定義
 
 # Groq Client 初始化
 try:
