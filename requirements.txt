@@ -1,10 +1,10 @@
 flask==2.0.1
 werkzeug<3.0,>=2.0
 line-bot-sdk==2.3.0
-# groq==0.9.0  <--- 移除或註解掉 groq
-openai>=1.0.0  # <--- 加入 openai (使用 v1.x 以上版本)
+openai>=1.0.0
 psycopg2-binary
 python-dotenv>=1.0.0
 gunicorn
-requests       # <--- 確認有 requests (給網頁查詢用，如果line-bot-sdk沒裝就裝上)
-httpx          # <--- 保持 (openai 或其他庫可能需要)
+requests
+httpx
+beautifulsoup4 # <--- 加入這個
