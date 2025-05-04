@@ -11,6 +11,7 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage
 from dotenv import load_dotenv
 from groq import Groq, RateLimitError, APIConnectionError, AuthenticationError
 from threading import Thread
+import asyncio
 
 # --- 載入環境變數 ---
 load_dotenv()
@@ -23,12 +24,14 @@ channel_secret = os.getenv('LINE_CHANNEL_SECRET')
 grok_api_key = os.getenv('GROK_API_KEY')
 DATABASE_URL = os.getenv('DATABASE_URL')
 
+# 驗證環境變數並記錄 API Key 資訊（不洩漏完整 Key）
 if not all([channel_access_token, channel_secret, grok_api_key]):
-    app.logger.error("錯誤：LINE Token 或 Grok API Key 未設定！")
+    app.logger.error("錯誤：LINE Token 或 Groq API Key 未設定！")
     exit()
 if not DATABASE_URL:
     app.logger.error("錯誤：DATABASE_URL 未設定！請在 Render 連接資料庫。")
     exit()
+app.logger.info(f"GROK_API_KEY 前4位: {grok_api_key[:4]}, 長度: {len(grok_api_key)}")
 
 try:
     line_bot_api = LineBotApi(channel_access_token)
@@ -92,7 +95,7 @@ async def fetch_web_content(url):
         async with httpx.AsyncClient(verify=True, timeout=10.0) as client:
             response = await client.get(url)
             response.raise_for_status()
-            return response.text[:2000]  # 限制內容長度以避免過長
+            return response.text[:2000]  # 限制內容長度
     except Exception as e:
         app.logger.error(f"獲取網頁內容失敗: {e}")
         return f"無法獲取網頁內容：{str(e)}"
@@ -112,12 +115,17 @@ def process_and_push(user_id, event):
                     cur.execute("SELECT history FROM conversation_history WHERE user_id = %s;", (user_id,))
                     result = cur.fetchone()
                     if result and result[0]:
-                        history = json.loads(result[0])
-                        app.logger.info(f"成功載入 user {user_id} 的歷史。")
+                        # JSONB 欄位已由 psycopg2 自動解析為 Python 物件
+                        app.logger.info(f"讀取原始歷史資料: {str(result[0])[:100]}...")
+                        if isinstance(result[0], list):
+                            history = result[0]
+                        else:
+                            history = json.loads(result[0])
+                        app.logger.info(f"成功載入 user {user_id} 的歷史，長度: {len(history)}")
                     else:
                         app.logger.info(f"無歷史紀錄。")
             except Exception as db_err:
-                app.logger.error(f"讀取歷史錯誤: {db_err}")
+                app.logger.error(f"讀取歷史錯誤: {db_err}", exc_info=True)
                 history = []
                 if conn and not conn.closed: conn.rollback()
 
@@ -126,11 +134,12 @@ def process_and_push(user_id, event):
         if user_text.startswith("查詢："):
             url = user_text[3:].strip()
             if url:
-                import asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                web_content = loop.run_until_complete(fetch_web_content(url))
-                loop.close()
+                # 在新的事件迴圈中運行異步請求
+                try:
+                    web_content = asyncio.run(fetch_web_content(url))
+                except Exception as e:
+                    app.logger.error(f"運行異步網頁查詢失敗: {e}", exc_info=True)
+                    web_content = f"無法執行網頁查詢：{str(e)}"
                 if web_content and not web_content.startswith("無法獲取"):
                     user_text = f"請根據以下網頁內容回答問題或提供總結：\n{web_content[:1000]}"
 
@@ -151,15 +160,15 @@ def process_and_push(user_id, event):
             )
             grok_response = chat_completion.choices[0].message.content.strip()
             app.logger.info(f"Grok 回應成功，用時 {time.time() - grok_start:.2f} 秒。")
-        except RateLimitError:
+        except RateLimitError as e:
             grok_response = "大腦過熱，請稍後再試。"
-            app.logger.warning("Grok API 速率限制觸發。")
-        except APIConnectionError:
+            app.logger.warning(f"Grok API 速率限制觸發: {e}")
+        except APIConnectionError as e:
             grok_response = "AI 無法連線或請求超時，請稍後再試。"
-            app.logger.error("Grok API 連線或超時錯誤。")
-        except AuthenticationError:
+            app.logger.error(f"Grok API 連線或超時錯誤: {e}")
+        except AuthenticationError as e:
             grok_response = "API 金鑰驗證失敗，請聯繫管理員。"
-            app.logger.error("Grok API 認證錯誤。")
+            app.logger.error(f"Grok API 認證錯誤: {e}", exc_info=True)
         except Exception as e:
             grok_response = "系統錯誤，請稍後再試。"
             app.logger.error(f"Grok API 錯誤: {type(e).__name__}: {e}", exc_info=True)
@@ -181,7 +190,7 @@ def process_and_push(user_id, event):
                     conn.commit()
                 app.logger.info(f"歷史儲存成功。")
             except Exception as db_err:
-                app.logger.error(f"儲存歷史錯誤: {db_err}")
+                app.logger.error(f"儲存歷史錯誤: {db_err}", exc_info=True)
                 if conn and not conn.closed: conn.rollback()
 
         app.logger.info(f"準備推送回應給 user {user_id}: {grok_response[:50]}...")
