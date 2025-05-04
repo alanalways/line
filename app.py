@@ -10,7 +10,8 @@ from linebot.exceptions import InvalidSignatureError, LineBotApiError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
 from dotenv import load_dotenv
-from groq import Groq, Timeout, APIConnectionError, RateLimitError
+from groq import Groq, RateLimitError, APIConnectionError
+from groq.exceptions import APITimeoutError  # 修正異常類型
 from threading import Thread
 import httpx
 
@@ -52,7 +53,6 @@ try:
         http_client=custom_http_client
     )
     app.logger.info("Groq client 初始化成功。")
-
 except Exception as e:
     app.logger.error(f"無法初始化 Groq client: {e}", exc_info=True)
     exit()
@@ -133,12 +133,16 @@ def process_and_push(user_id, event):
             app.logger.info(f"Grok 回應成功，用時 {time.time() - grok_start:.2f} 秒。")
         except RateLimitError:
             grok_response = "大腦過熱，請稍後再試。"
+            app.logger.warning("Grok API 速率限制觸發。")
         except APIConnectionError:
             grok_response = "AI 無法連線，請稍後再試。"
-        except Timeout:
+            app.logger.error("Grok API 連線失敗。")
+        except APITimeoutError:  # 修正為正確的異常類型
             grok_response = "思考過久，請換個問法或稍後再試。"
+            app.logger.error("Grok API 請求超時。")
         except Exception as e:
-            app.logger.error(f"Grok API 錯誤: {e}", exc_info=True)
+            grok_response = "系統錯誤，請稍後再試。"
+            app.logger.error(f"Grok API 錯誤: {type(e).__name__}: {e}", exc_info=True)
 
         history.append({"role": "assistant", "content": grok_response})
         if len(history) > MAX_HISTORY_TURNS * 2:
@@ -160,16 +164,17 @@ def process_and_push(user_id, event):
                 app.logger.error(f"儲存歷史錯誤: {db_err}")
                 if conn and not conn.closed: conn.rollback()
 
+        app.logger.info(f"準備推送回應給 user {user_id}: {grok_response[:50]}...")
         try:
             line_bot_api.push_message(user_id, TextSendMessage(text=grok_response))
-            app.logger.info(f"訊息推送成功。")
+            app.logger.info(f"訊息推送完成。")
         except LineBotApiError as e:
             app.logger.error(f"LINE API 錯誤: {e.status_code} {e.error.message}")
         except Exception as e:
             app.logger.error(f"推送訊息錯誤: {e}", exc_info=True)
 
     except Exception as e:
-        app.logger.error(f"處理 user {user_id} 時錯誤: {e}", exc_info=True)
+        app.logger.error(f"處理 user {user_id} 時錯誤: {type(e).__name__}: {e}", exc_info=True)
     finally:
         if conn and not conn.closed:
             conn.close()
