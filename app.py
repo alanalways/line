@@ -20,11 +20,11 @@ GROK_API_KEY = os.environ['GROK_API_KEY']
 GROK_API_URL = "https://api.x.ai/v1/chat/completions"
 GROK_IMAGE_API_URL = "https://api.x.ai/v1/image/generations"
 
-# 初始化記憶體 SQLite 資料庫
+# 初始化記憶體 SQLite 資料庫（全局）
 def init_db():
     conn = sqlite3.connect(':memory:')
     c = conn.cursor()
-    c.execute('''CREATE TABLE conversations
+    c.execute('''CREATE TABLE IF NOT EXISTS conversations
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   user_id TEXT NOT NULL,
                   message TEXT NOT NULL,
@@ -32,6 +32,9 @@ def init_db():
                   timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     conn.commit()
     conn.close()
+
+# 確保資料庫在應用啟動時初始化
+init_db()
 
 # 儲存對話到資料庫
 def save_message(user_id, message, role):
@@ -50,9 +53,6 @@ def get_conversation_history(user_id, limit=10):
     conn.close()
     history.reverse()  # 反轉以按時間順序排列
     return [{"role": row[0], "content": row[1]} for row in history]
-
-# 初始化資料庫
-init_db()
 
 # 聯網搜尋功能
 def web_search(query):
