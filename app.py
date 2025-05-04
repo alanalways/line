@@ -2,39 +2,39 @@ import os
 import time
 import json
 import psycopg2 # 用於 PostgreSQL
-from flask import Flask, request, abort, logging # 加入 logging
-
-# v3 SDK 的 import 方式調整：
-from linebot.v3.exceptions import InvalidSignatureError # 只保留 InvalidSignatureError
+import logging # <--- 導入標準的 logging 模組
+from flask import Flask, request, abort # <--- 不再從 flask 導入 logging
+from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi, PushMessageRequest, TextMessage,
-    ApiException # <--- 改為導入 ApiException
+    ApiException
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
-from dotenv import load_dotenv # 如果本機開發需要讀取 .env
-from groq import Groq, Timeout, APIConnectionError, RateLimitError # Grok SDK 和錯誤
-from threading import Thread # 用於背景處理
+from dotenv import load_dotenv
+from groq import Groq, Timeout, APIConnectionError, RateLimitError
+from threading import Thread
 
 # --- 載入環境變數 ---
-load_dotenv() # 如果使用 .env 檔案
+load_dotenv()
 
 app = Flask(__name__)
-# 設定日誌記錄器，方便在 Render Logs 中查看
-app.logger.setLevel(logging.INFO)
+# --- 設定日誌記錄器 ---
+# 使用標準 logging 模組來設定等級
+app.logger.setLevel(logging.INFO) # <--- 確保這裡用的是標準 logging.INFO
 
 # --- 設定 ---
 channel_access_token = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
 channel_secret = os.getenv('LINE_CHANNEL_SECRET')
 grok_api_key = os.getenv('GROK_API_KEY')
-DATABASE_URL = os.getenv('DATABASE_URL') # Render 會自動提供
+DATABASE_URL = os.getenv('DATABASE_URL')
 
 # 檢查必要的環境變數是否存在
 if not all([channel_access_token, channel_secret, grok_api_key]):
     app.logger.error("錯誤：LINE Token 或 Grok API Key 未設定！")
-    exit() # 缺少必要金鑰，直接退出
+    exit()
 if not DATABASE_URL:
     app.logger.error("錯誤：DATABASE_URL 未設定！請在 Render 連接資料庫。")
-    exit() # 記憶功能無法運作
+    exit()
 
 # LINE SDK 設定
 configuration = Configuration(access_token=channel_access_token)
@@ -46,17 +46,17 @@ try:
     app.logger.info("Groq client 初始化成功。")
 except Exception as e:
     app.logger.error(f"無法初始化 Groq client: {e}")
-    exit() # Groq 無法使用，服務也沒意義了
+    exit()
 
 # 對話記憶設定
-MAX_HISTORY_TURNS = 5 # 記住最近 5 輪對話 (使用者+機器人) = 10 條訊息
+MAX_HISTORY_TURNS = 5
 
 # --- 資料庫輔助函數 ---
 def get_db_connection():
     """建立並返回一個 PostgreSQL 連接"""
     try:
         conn = psycopg2.connect(DATABASE_URL)
-        conn.set_client_encoding('UTF8') # 確保 UTF8 編碼
+        conn.set_client_encoding('UTF8')
         return conn
     except Exception as e:
         app.logger.error(f"資料庫連接失敗: {e}")
@@ -83,7 +83,7 @@ def init_db():
         app.logger.error(f"無法初始化資料庫資料表: {e}")
         if conn: conn.rollback()
     finally:
-        if conn and not conn.closed: conn.close() # 確保關閉連接
+        if conn and not conn.closed: conn.close()
 
 # --- 背景處理函數 (核心邏輯) ---
 def process_and_push(user_id, user_text):
@@ -91,7 +91,7 @@ def process_and_push(user_id, user_text):
     app.logger.info(f"開始背景處理 user {user_id} 的訊息: '{user_text[:50]}...'")
     start_process_time = time.time()
     conn = None
-    history = [] # 預設空歷史
+    history = []
 
     try:
         # 1. 從資料庫讀取歷史紀錄
@@ -102,26 +102,25 @@ def process_and_push(user_id, user_text):
                     cur.execute("SELECT history FROM conversation_history WHERE user_id = %s;", (user_id,))
                     result = cur.fetchone()
                     if result and result[0]:
-                        history = json.loads(result[0]) # 從 JSONB 載入
+                        history = json.loads(result[0])
                         app.logger.info(f"成功載入 user {user_id} 的歷史，長度: {len(history)}")
                     else:
                          app.logger.info(f"無 user {user_id} 的歷史紀錄。")
             except (Exception, psycopg2.DatabaseError) as db_err:
                 app.logger.error(f"讀取 user {user_id} 的 DB 歷史時出錯: {db_err}")
-                history = [] # 出錯則從空歷史開始
-                if conn and not conn.closed: conn.rollback() # 回滾事務
+                history = []
+                if conn and not conn.closed: conn.rollback()
         else:
              app.logger.warning("無法連接資料庫，將不使用歷史紀錄。")
 
         # 將新訊息加入歷史
         history.append({"role": "user", "content": user_text})
-        # 裁剪歷史紀錄
         if len(history) > MAX_HISTORY_TURNS * 2:
             history = history[-(MAX_HISTORY_TURNS * 2):]
 
         # 2. 準備呼叫 Grok (Web Search 已移除)
         prompt_messages = history.copy()
-        grok_response = "抱歉，系統發生錯誤，請稍後再試。" # 預設錯誤回覆
+        grok_response = "抱歉，系統發生錯誤，請稍後再試。"
 
         # 3. 呼叫 Grok API
         try:
@@ -129,10 +128,10 @@ def process_and_push(user_id, user_text):
             app.logger.info(f"準備呼叫 Grok API (model: grok-3-mini-beta) for user {user_id}...")
             chat_completion = groq_client.chat.completions.create(
                 messages=prompt_messages,
-                model="grok-3-mini-beta", # 使用你列表中的模型
+                model="grok-3-mini-beta",
                 temperature=0.7,
                 max_tokens=1500,
-                timeout=Timeout(read=60.0) # 60 秒讀取超時
+                timeout=Timeout(read=60.0)
             )
             grok_response = chat_completion.choices[0].message.content.strip()
             grok_duration = time.time() - grok_start_time
@@ -149,34 +148,31 @@ def process_and_push(user_id, user_text):
             grok_response = "抱歉，我想得有點久，可以試著換個問法或稍後再試嗎？"
         except Exception as e:
             app.logger.error(f"Grok API 未知錯誤 for user {user_id}: {e}", exc_info=True)
-            # 維持預設錯誤訊息
 
         # 4. 將 Grok 回應加入歷史
         history.append({"role": "assistant", "content": grok_response})
-        # 再次裁剪 (可選)
         if len(history) > MAX_HISTORY_TURNS * 2:
              history = history[-(MAX_HISTORY_TURNS * 2):]
 
         # 5. 將更新後的歷史存回資料庫
-        if conn: # 只有在連接成功時才嘗試儲存
+        if conn:
             try:
                 if conn.closed:
                     app.logger.warning(f"DB 連接已關閉，無法儲存 user {user_id} 的歷史。嘗試重新連接...")
-                    conn = get_db_connection() # 嘗試重新連接
+                    conn = get_db_connection()
                     if not conn: raise Exception("無法重新連接資料庫")
 
                 with conn.cursor() as cur:
-                    # 使用 UPSERT
                     cur.execute("""
                         INSERT INTO conversation_history (user_id, history)
                         VALUES (%s, %s)
                         ON CONFLICT (user_id) DO UPDATE SET history = EXCLUDED.history;
-                    """, (user_id, json.dumps(history))) # 存成 JSON 字串
-                    conn.commit() # 提交變更
+                    """, (user_id, json.dumps(history)))
+                    conn.commit()
                 app.logger.info(f"成功儲存 user {user_id} 的歷史。")
             except (Exception, psycopg2.DatabaseError) as db_err:
                 app.logger.error(f"儲存 user {user_id} 的 DB 歷史時出錯: {db_err}")
-                if conn and not conn.closed: conn.rollback() # 出錯時回滾
+                if conn and not conn.closed: conn.rollback()
         else:
              app.logger.warning("無法連接資料庫，歷史紀錄未儲存。")
 
@@ -193,20 +189,16 @@ def process_and_push(user_id, user_text):
                 )
             push_duration = time.time() - push_start_time
             app.logger.info(f"成功推送訊息給 user {user_id}，耗時 {push_duration:.2f} 秒。")
-        except ApiException as e: # <--- 修改點：捕捉 ApiException
-            # 使用 v3 的 ApiException 提供的屬性來記錄錯誤
+        except ApiException as e:
             app.logger.error(f"推送訊息給 user {user_id} 失敗: Status={e.status}, Reason={e.reason}, Body={e.body}")
         except Exception as e:
              app.logger.error(f"推送訊息給 user {user_id} 時發生未知錯誤: {e}", exc_info=True)
 
     except Exception as e:
-        # 捕捉整個背景任務中的未知錯誤
         app.logger.error(f"背景任務處理 user {user_id} 時發生嚴重錯誤: {e}", exc_info=True)
     finally:
-        # 無論成功或失敗，都要確保關閉資料庫連接
         if conn and not conn.closed:
             conn.close()
-            # app.logger.debug(f"資料庫連接已關閉 for user {user_id}")
         process_duration = time.time() - start_process_time
         app.logger.info(f"背景任務 for user {user_id} 結束，總耗時 {process_duration:.2f} 秒。")
 
@@ -217,23 +209,21 @@ def callback():
     """接收來自 LINE 的 Webhook 請求"""
     signature = request.headers['X-Line-Signature']
     body = request.get_data(as_text=True)
-    app.logger.info(f"收到來自 LINE 的請求 (Body 前 100 字): {body[:100]}") # 日誌記錄請求
+    app.logger.info(f"收到來自 LINE 的請求 (Body 前 100 字): {body[:100]}")
 
     try:
-        # 驗證簽名並處理事件
         handler.handle(body, signature)
     except InvalidSignatureError:
         app.logger.error("簽名驗證失敗！請檢查 Channel Secret。")
         abort(400)
-    except ApiException as e: # <--- 修改點：捕捉 ApiException
-        # 使用 v3 的 ApiException 提供的屬性來記錄錯誤
+    except ApiException as e:
         app.logger.error(f"處理 Webhook 時發生 LINE API 錯誤: Status={e.status}, Reason={e.reason}, Body={e.body}")
-        abort(500) # 返回伺服器錯誤
+        abort(500)
     except Exception as e:
         app.logger.error(f"處理 Webhook 時發生未知錯誤: {e}", exc_info=True)
         abort(500)
 
-    return 'OK' # 必須返回 'OK' 給 LINE
+    return 'OK'
 
 # --- LINE 訊息事件處理器 ---
 @handler.add(MessageEvent, message=TextMessageContent)
@@ -243,28 +233,20 @@ def handle_message(event):
     user_text = event.message.text
     app.logger.info(f"收到來自 user {user_id} 的文字訊息，準備啟動背景任務。")
 
-    # 啟動背景執行緒處理，避免阻塞 Webhook 回應
     thread = Thread(target=process_and_push, args=(user_id, user_text))
-    thread.daemon = True # 設為守護執行緒
+    thread.daemon = True
     thread.start()
 
-    # handle_message 不需要返回 'OK'
-
 # --- 主程式進入點與初始化 ---
-# 應用程式啟動時(無論是本機或 Gunicorn)，都嘗試初始化資料庫
 try:
     init_db()
     app.logger.info("資料庫初始化檢查完成。")
 except Exception as e:
      app.logger.error(f"啟動時資料庫初始化失敗: {e}")
-     # 考慮是否要在這裡退出，如果資料庫是必要的
 
-# 只有在本機直接執行 python app.py 時才會運行下面的程式碼
 if __name__ == "__main__":
     app.logger.info("以 __main__ 方式啟動 (通常用於本機測試)。")
     port = int(os.environ.get('PORT', 8080))
-    # debug=False 很重要
     app.run(host='0.0.0.0', port=port, debug=False)
 else:
-    # 如果是 Gunicorn 在運行 (它會導入 app 物件)
     app.logger.info("Flask 應用程式 (透過 Gunicorn 或其他 WSGI 伺服器) 啟動。")
