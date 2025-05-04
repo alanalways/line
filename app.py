@@ -10,8 +10,9 @@ from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi, PushMessageRequest, TextMessage,
     ApiException
 )
-# --- 修正 Webhook 導入 ---
-from linebot.v3.webhooks import MessageEvent, TextMessageContent, WebhookParser # <--- 改成 WebhookParser
+# --- 再次修正 Webhook 導入路徑 ---
+from linebot.v3.webhooks.parser import WebhookParser # <--- 使用更直接的路徑導入
+from linebot.v3.webhooks import MessageEvent, TextMessageContent # 其他事件/內容導入不變
 
 from dotenv import load_dotenv
 from groq import Groq, Timeout, APIConnectionError, RateLimitError
@@ -39,8 +40,7 @@ if not DATABASE_URL:
 
 # LINE SDK 設定
 configuration = Configuration(access_token=channel_access_token)
-# --- 使用正確的類別名稱 ---
-parser = WebhookParser(channel_secret) # <--- 將 WebhookHandler 改成 WebhookParser，變數名稱也改成 parser
+parser = WebhookParser(channel_secret) # 這裡不變，還是用 WebhookParser
 
 # Groq Client 初始化
 try:
@@ -54,7 +54,7 @@ except Exception as e:
 MAX_HISTORY_TURNS = 5
 
 # --- 資料庫輔助函數 ---
-# (get_db_connection 和 init_db 函數保持不變，這裡省略以縮短篇幅，請確保它們還在)
+# (get_db_connection 和 init_db 函數保持不變)
 def get_db_connection():
     """建立並返回一個 PostgreSQL 連接"""
     try:
@@ -89,7 +89,7 @@ def init_db():
         if conn and not conn.closed: conn.close()
 
 # --- 背景處理函數 (核心邏輯) ---
-# (process_and_push 函數保持不變，這裡省略以縮短篇幅，請確保它還在)
+# (process_and_push 函數保持不變)
 def process_and_push(user_id, user_text):
     """在背景執行緒中處理訊息、呼叫 Grok、更新歷史、推送回覆"""
     app.logger.info(f"開始背景處理 user {user_id} 的訊息: '{user_text[:50]}...'")
@@ -216,8 +216,7 @@ def callback():
     app.logger.info(f"收到來自 LINE 的請求 (Body 前 100 字): {body[:100]}")
 
     try:
-        # --- 使用 parser 來處理 ---
-        parser.parse(body, signature) # <--- 使用 parser.parse() 而不是 handler.handle()
+        parser.parse(body, signature) # 使用 parser.parse()
     except InvalidSignatureError:
         app.logger.error("簽名驗證失敗！請檢查 Channel Secret。")
         abort(400)
@@ -231,8 +230,7 @@ def callback():
     return 'OK'
 
 # --- LINE 訊息事件處理器 ---
-# --- 使用 parser 的 decorator ---
-@parser.add(MessageEvent, message=TextMessageContent) # <--- 將 @handler.add 改成 @parser.add
+@parser.add(MessageEvent, message=TextMessageContent) # 使用 @parser.add
 def handle_message(event):
     """處理收到的文字訊息事件，啟動背景任務"""
     user_id = event.source.user_id
