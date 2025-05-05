@@ -269,3 +269,14 @@ def callback():
     try: handler.handle(body, signature)
     except InvalidSignatureError: app.logger.error("簽名錯誤。"); abort(400)
     except LineBotApiError as e: app.logger.error(f"LINE API 錯誤: {e.status_code} {e.error.message}"); abort(500)
+    except Exception as e: app.logger.error(f"Webhook 錯誤: {e}", exc_info=True); abort(500)
+    return 'OK'
+
+@handler.add(MessageEvent, message=(TextMessage, ImageMessage))
+def handle_message(event):
+    user_id = event.source.user_id
+    Thread(target=process_and_push, args=(user_id, event)).start()
+
+# --- 主程式進入點 (保持不變) ---
+if __name__ == "__main__": init_db(); port = int(os.environ.get("PORT", 5000)); app.run(host="0.0.0.0", port=port)
+else: init_db()
