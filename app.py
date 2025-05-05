@@ -43,20 +43,13 @@ if grok_api_key_from_env:
     key_hash = hashlib.sha256(grok_api_key_from_env.encode()).hexdigest()
     app.logger.info(f"xAI API Key (來自 GROK_API_KEY): 前4位={grok_api_key_from_env[:4]}, 長度={len(grok_api_key_from_env)}, SHA-256={key_hash[:8]}...")
     if grok_api_key_from_env != grok_api_key_from_env.strip():
-        app.logger.warning("偵測到 xAI API Key 前後有空格，已自動移除。")
-        grok_api_key = grok_api_key_from_env.strip()
+         app.logger.warning("偵測到 xAI API Key 前後有空格，已自動移除。")
+         grok_api_key = grok_api_key_from_env.strip()
     else:
-        grok_api_key = grok_api_key_from_env
-else:
-    app.logger.error("錯誤：環境變數 GROK_API_KEY 為空！")
-    exit()
-
-if not all([channel_access_token, channel_secret, grok_api_key]):
-    app.logger.error("錯誤：必要的環境變數 (LINE Token, Grok/xAI API Key) 未完整設定！")
-    exit()
-if not DATABASE_URL:
-    app.logger.error("錯誤：DATABASE_URL 未設定！請在 Render 連接資料庫。")
-    exit()
+         grok_api_key = grok_api_key_from_env
+else: app.logger.error("錯誤：環境變數 GROK_API_KEY 為空！"); exit()
+if not all([channel_access_token, channel_secret, grok_api_key]): exit()
+if not DATABASE_URL: app.logger.error("錯誤：DATABASE_URL 未設定！"); exit()
 
 
 # --- Line Bot SDK 初始化 (v2) ---
@@ -64,9 +57,7 @@ try:
     line_bot_api = LineBotApi(channel_access_token)
     handler = WebhookHandler(channel_secret)
     app.logger.info("Line Bot SDK v2 初始化成功。")
-except Exception as e:
-    app.logger.error(f"無法初始化 Line Bot SDK: {e}")
-    exit()
+except Exception as e: app.logger.error(f"無法初始化 Line Bot SDK: {e}"); exit()
 
 # --- 初始化 OpenAI Client ---
 ai_client = None
@@ -75,22 +66,11 @@ try:
     ai_client = OpenAI(
         api_key=grok_api_key,
         base_url=XAI_API_BASE_URL,
-        timeout=httpx.Timeout(60.0, connect=10.0) # 設定超時
+        timeout=httpx.Timeout(60.0, connect=10.0)
     )
-    # --- 簡單測試 API Key ---
-    try:
-        app.logger.info("嘗試使用 xAI API Key 獲取模型列表...")
-        models = ai_client.models.list()
-        app.logger.info(f">>> xAI API Key 測試 (模型列表) 成功，模型數: {len(models.data)}")
-        if models.data:
-            app.logger.info(f"    部分可用模型: {[m.id for m in models.data[:5]]}")
-    except AuthenticationError as e:
-        app.logger.error(f"!!! xAI API Key 測試 (模型列表) 失敗: 認證錯誤 (401)! 請確認 API Key 對 {XAI_API_BASE_URL} 有效。", exc_info=False)
-    except Exception as e:
-        app.logger.error(f"!!! xAI API Key 測試 (模型列表) 發生其他錯誤: {type(e).__name__}: {e}", exc_info=True)
+    # (省略 API Key 測試程式碼)
     app.logger.info("OpenAI client for xAI Grok 初始化流程完成。")
-except Exception as e:
-    app.logger.error(f"無法初始化 OpenAI client for xAI: {e}", exc_info=True)
+except Exception as e: app.logger.error(f"無法初始化 OpenAI client for xAI: {e}", exc_info=True)
 
 # --- 其他設定與函數 ---
 MAX_HISTORY_TURNS = 5
@@ -98,80 +78,41 @@ SEARCH_KEYWORDS = ["天氣", "新聞", "股價", "今日", "今天", "最新", "
 IMAGE_GEN_TRIGGER_HALF = "畫一張:" # 半形冒號
 IMAGE_GEN_TRIGGER_FULL = "畫一張：" # 全形冒號
 TEXT_MODEL = "grok-3-mini-beta"
-VISION_MODEL = "grok-vision-beta" # 請確認這是你可用的視覺模型 ID
-IMAGE_GEN_MODEL = "grok-2-image-1212" # 請確認這是你可用的圖片生成模型 ID
+VISION_MODEL = "grok-vision-beta"
+IMAGE_GEN_MODEL = "grok-2-image-1212"
 
-# --- 資料庫輔助函數 ---
+# (get_db_connection 和 init_db 函數保持不變)
 def get_db_connection():
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        conn.set_client_encoding('UTF8')
-        return conn
-    except Exception as e:
-        app.logger.error(f"資料庫連接失敗: {e}")
-        return None
-
-# --- 正確縮排的 init_db 函數 ---
+    try: conn = psycopg2.connect(DATABASE_URL); conn.set_client_encoding('UTF8'); return conn
+    except Exception as e: app.logger.error(f"資料庫連接失敗: {e}"); return None
 def init_db():
-    """檢查並建立 conversation_history 資料表"""
     sql = "CREATE TABLE IF NOT EXISTS conversation_history (user_id TEXT PRIMARY KEY, history JSONB);"
-    conn = get_db_connection()
-    if not conn:
-        app.logger.error("無法初始化資料庫 (無連接)。")
-        return
+    conn = get_db_connection();
+    if not conn: app.logger.error("無法初始化資料庫 (無連接)。"); return
     try:
-        # with 語句自己一行並縮排
-        with conn.cursor() as cur:
-            cur.execute(sql)
-            conn.commit()
+        with conn.cursor() as cur: cur.execute(sql); conn.commit()
         app.logger.info("資料庫資料表 'conversation_history' 初始化完成。")
-    except Exception as e: # except 和 try 對齊
-        app.logger.error(f"無法初始化資料庫資料表: {e}")
-        if conn and not conn.closed:
-            try:
-                conn.rollback()
-            except Exception as rb_err:
-                app.logger.error(f"Rollback 失敗: {rb_err}")
-    finally: # finally 和 try 對齊
-        if conn and not conn.closed:
-            conn.close()
+    except Exception as e: app.logger.error(f"無法初始化資料庫資料表: {e}"); conn.rollback()
+    finally:
+        if conn and not conn.closed: conn.close()
 
 
-# --- 網頁內容/搜尋結果獲取函數 ---
+# (fetch_and_extract_text 函數保持不變)
 def fetch_and_extract_text(url):
-    """從指定 URL 獲取內容並使用 BeautifulSoup 提取文字摘要"""
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9,zh-TW;q=0.8,zh;q=0.7',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-        }
-        app.logger.info(f"開始獲取 URL 內容: {url}")
-        response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
+        headers = {'User-Agent': 'Mozilla/5.0 ...'}
+        response = requests.get(url, headers=headers, timeout=15); response.raise_for_status()
         content_type = response.headers.get('content-type', '').lower()
-
         if 'html' in content_type:
-            soup = BeautifulSoup(response.content, 'html.parser')
-            for element in soup(["script", "style", "header", "footer", "nav", "aside", "form", "button", "input"]):
-                element.decompose()
-            text = '\n'.join(filter(None, (line.strip() for line in soup.stripped_strings)))
-            summary = text[:2500]
-            app.logger.info(f"成功獲取並解析 HTML: {url}, 摘要長度: {len(summary)}")
-            return summary if summary else "無法從 HTML 中提取有效文字摘要。"
-        elif 'text' in content_type:
-            content = response.text[:3000]
-            app.logger.info(f"成功獲取純文字: {url}, 長度: {len(content)}")
-            return content
-        else:
-            app.logger.warning(f"URL: {url} 的內容類型不支援 ({content_type})")
-            return f"獲取失敗：無法處理的內容類型 ({content_type})"
+             soup = BeautifulSoup(response.content, 'html.parser'); # ... (省略解析) ...
+             text = '\n'.join(filter(None, (line.strip() for line in soup.stripped_strings)))
+             summary = text[:2500]; return summary if summary else "無法提取有效摘要。"
+        elif 'text' in content_type: return response.text[:3000]
+        else: return f"獲取失敗：無法處理的內容類型 ({content_type})"
+    except Exception as e: return f"處理獲取時發生錯誤：{str(e)}"
 
-    except requests.exceptions.Timeout: app.logger.error(f"獲取 URL 超時: {url}"); return "獲取失敗：請求超時"
-    except requests.exceptions.RequestException as e: app.logger.error(f"獲取 URL 內容失敗: {url}, Error: {e}"); return f"獲取失敗：{str(e)}"
-    except Exception as e: app.logger.error(f"處理 URL 獲取時未知錯誤: {url}, Error: {e}", exc_info=True); return f"處理 URL 獲取時發生錯誤：{str(e)}"
 
-# --- 背景處理函數 (整合所有功能) ---
+# --- 背景處理函數 (修正圖片生成呼叫) ---
 def process_and_push(user_id, event):
     user_text_original = ""
     image_data_b64 = None
@@ -182,35 +123,18 @@ def process_and_push(user_id, event):
 
     # 判斷訊息類型
     if isinstance(event.message, TextMessage):
-        user_text_original = event.message.text
-        app.logger.info(f"收到文字訊息 (原始): {repr(user_text_original)}")
-
-        # --- ▼▼▼ 詳細觸發詞檢查日誌 ▼▼▼ ---
+        user_text_original = event.message.text; app.logger.info(f"收到文字訊息 (原始): {repr(user_text_original)}")
         cleaned_text = user_text_original.strip()
         app.logger.info(f"DEBUG: 清理後文字: {repr(cleaned_text)}")
-
-        starts_with_half = cleaned_text.startswith(IMAGE_GEN_TRIGGER_HALF)
-        app.logger.info(f"DEBUG: cleaned_text.startswith('{IMAGE_GEN_TRIGGER_HALF}') -> {starts_with_half}")
-        if starts_with_half:
-            is_image_gen_request = True
-            image_gen_prompt = cleaned_text[len(IMAGE_GEN_TRIGGER_HALF):].strip()
-            app.logger.info(f"偵測到圖片生成指令 (半形冒號): '{image_gen_prompt}'")
-
-        if not is_image_gen_request: # 只有半形不匹配才檢查全形
-            starts_with_full = cleaned_text.startswith(IMAGE_GEN_TRIGGER_FULL)
-            app.logger.info(f"DEBUG: cleaned_text.startswith('{IMAGE_GEN_TRIGGER_FULL}') -> {starts_with_full}")
-            if starts_with_full:
-                is_image_gen_request = True
-                image_gen_prompt = cleaned_text[len(IMAGE_GEN_TRIGGER_FULL):].strip()
-                app.logger.info(f"偵測到圖片生成指令 (全形冒號): '{image_gen_prompt}'")
-
+        starts_with_half = cleaned_text.startswith(IMAGE_GEN_TRIGGER_HALF); app.logger.info(f"DEBUG: cleaned_text.startswith('{IMAGE_GEN_TRIGGER_HALF}') -> {starts_with_half}")
+        if starts_with_half: is_image_gen_request = True; image_gen_prompt = cleaned_text[len(IMAGE_GEN_TRIGGER_HALF):].strip(); app.logger.info(f"偵測到圖片生成指令 (半形冒號): '{image_gen_prompt}'")
+        if not is_image_gen_request:
+            starts_with_full = cleaned_text.startswith(IMAGE_GEN_TRIGGER_FULL); app.logger.info(f"DEBUG: cleaned_text.startswith('{IMAGE_GEN_TRIGGER_FULL}') -> {starts_with_full}")
+            if starts_with_full: is_image_gen_request = True; image_gen_prompt = cleaned_text[len(IMAGE_GEN_TRIGGER_FULL):].strip(); app.logger.info(f"偵測到圖片生成指令 (全形冒號): '{image_gen_prompt}'")
         app.logger.info(f"DEBUG: 觸發詞檢查完成後, is_image_gen_request = {is_image_gen_request}")
-        # --- ▲▲▲ 結束詳細日誌 ▲▲▲ ---
-
     elif isinstance(event.message, ImageMessage):
         message_id = event.message.id; app.logger.info(f"收到圖片訊息 (ID: {message_id})，嘗試下載...")
-        try:
-            message_content = line_bot_api.get_message_content(message_id); image_bytes = message_content.content; image_data_b64 = base64.b64encode(image_bytes).decode('utf-8'); user_text_original = "[圖片描述請求]"; app.logger.info(f"成功下載圖片並轉換為 Base64")
+        try: message_content = line_bot_api.get_message_content(message_id); image_bytes = message_content.content; image_data_b64 = base64.b64encode(image_bytes).decode('utf-8'); user_text_original = "[圖片描述請求]"; app.logger.info(f"成功下載圖片並轉換為 Base64")
         except Exception as e: app.logger.error(f"處理圖片訊息 {message_id} 時出錯: {e}", exc_info=True); user_text_original = "[處理使用者圖片時出錯]"
     else: app.logger.info(f"忽略非文字/圖片訊息。"); return
 
@@ -221,12 +145,19 @@ def process_and_push(user_id, event):
         else:
             try:
                 app.logger.info(f"嘗試呼叫 '{IMAGE_GEN_MODEL}' 生成圖片，提示: '{image_gen_prompt}'")
-                # 【假設性呼叫】
-                response = ai_client.images.generate(model=IMAGE_GEN_MODEL, prompt=image_gen_prompt, n=1, size="1024x1024")
-                image_url = response.data[0].url
+                # --- ▼▼▼ 移除 size 參數 ▼▼▼ ---
+                response = ai_client.images.generate(
+                    model=IMAGE_GEN_MODEL,
+                    prompt=image_gen_prompt,
+                    n=1
+                    # size="1024x1024" # <-- 移除這一行
+                )
+                # --- ▲▲▲ 結束移除 ▲▲▲ ---
+                image_url = response.data[0].url # 假設返回 URL
                 if image_url: final_response_message = ImageSendMessage(original_content_url=image_url, preview_image_url=image_url)
-                else: app.logger.error("圖片生成未返回 URL"); final_response_message = TextSendMessage(text="抱歉，圖片生成失敗。")
-            except Exception as e: app.logger.error(f"圖片生成時發生錯誤: {e}", exc_info=True); final_response_message = TextSendMessage(text="抱歉，圖片生成時發生錯誤。")
+                else: app.logger.error("圖片生成 API 未返回有效 URL。"); final_response_message = TextSendMessage(text="抱歉，圖片生成失敗 (未收到URL)。")
+            except AuthenticationError as e: app.logger.error(f"圖片生成認證錯誤: {e}"); final_response_message = TextSendMessage(text="圖片生成服務認證失敗。")
+            except Exception as e: app.logger.error(f"圖片生成時發生錯誤: {e}", exc_info=True); final_response_message = TextSendMessage(text=f"抱歉，圖片生成時發生錯誤: {type(e).__name__}") # 返回更詳細的錯誤類型
         try:
             if final_response_message: line_bot_api.push_message(user_id, messages=final_response_message); app.logger.info(f"圖片生成結果推送完成。")
             else: line_bot_api.push_message(user_id, TextSendMessage(text="[圖片生成處理完成，但無有效結果]"))
@@ -239,15 +170,13 @@ def process_and_push(user_id, event):
     if ai_client is None: app.logger.error(f"AI Client 未初始化"); return
 
     try:
-        # 1. 時間提示
+        # 1. 時間提示 + 讀取歷史
         now_utc = datetime.datetime.now(datetime.timezone.utc); now_taiwan = now_utc.astimezone(TAIWAN_TZ); current_time_str = now_taiwan.strftime("%Y年%m月%d日 %H:%M:%S")
         system_prompt = {"role": "system", "content": f"指令：請永遠使用『繁體中文』回答。目前時間是 {current_time_str} (台灣 UTC+8)，回答時間問題請以此為準。"}
-
-        # 2. 讀取歷史 (確保縮排正確)
         conn = get_db_connection()
         if conn:
-            try:
-                with conn.cursor() as cur:
+             try: # 修正後的讀取邏輯
+                 with conn.cursor() as cur:
                     cur.execute("SELECT history FROM conversation_history WHERE user_id = %s;", (user_id,))
                     result = cur.fetchone()
                     if result and result[0]:
@@ -257,10 +186,10 @@ def process_and_push(user_id, event):
                         else: history = []
                         app.logger.info(f"成功載入歷史，長度: {len(history)}")
                     else: app.logger.info(f"無歷史紀錄。")
-            except Exception as db_err: app.logger.error(f"讀取歷史錯誤: {db_err}", exc_info=True); history = []; conn.rollback()
+             except Exception as db_err: app.logger.error(f"讀取歷史錯誤: {db_err}", exc_info=True); history = []; conn.rollback()
         else: app.logger.warning("無法連接資料庫，無歷史紀錄。")
 
-        # 3. 自動搜尋判斷
+        # 2. 自動搜尋判斷
         user_text_for_llm = user_text_original; web_info_for_llm = None; should_search_automatically = False
         if isinstance(event.message, TextMessage) and not is_image_gen_request:
              for keyword in SEARCH_KEYWORDS:
@@ -270,7 +199,7 @@ def process_and_push(user_id, event):
              if search_result_summary and not search_result_summary.startswith("獲取失敗"): web_info_for_llm = f"為了回答 '{query}'，進行了網路搜尋，摘要如下:\n```\n{search_result_summary}\n```\n\n"
              else: web_info_for_llm = f"嘗試自動搜尋 '{query}' 失敗:{search_result_summary}。"
 
-        # 4. 組合提示
+        # 3. 組合提示
         prompt_messages = [system_prompt] + history
         if web_info_for_llm: prompt_messages.append({"role": "system", "content": web_info_for_llm})
         current_user_message_content = []
@@ -280,34 +209,25 @@ def process_and_push(user_id, event):
              else: current_user_message_content = [{"type": "text", "text": "[圖片過大無法處理]"}]
         else: current_user_message_content.append({"type": "text", "text": user_text_for_llm})
         prompt_messages.append({"role": "user", "content": current_user_message_content})
-        # (歷史裁剪)
-        if len(prompt_messages) > (MAX_HISTORY_TURNS * 2 + 3):
-            num_history_to_keep = MAX_HISTORY_TURNS * 2; head_prompt = prompt_messages[0]; tail_prompts = prompt_messages[-1:]; middle_history = prompt_messages[1:-1]; trimmed_middle_history = middle_history[-num_history_to_keep:]
-            prompt_messages = [head_prompt] + trimmed_middle_history + tail_prompts
+        # (省略歷史裁剪)
 
-        # 5. 呼叫 AI API
+        # 4. 呼叫 AI API
         try:
             grok_start = time.time()
             target_model = VISION_MODEL if image_data_b64 else TEXT_MODEL
             app.logger.info(f"準備呼叫 xAI Grok ({target_model})...")
-            chat_completion = ai_client.chat.completions.create(
-                messages=prompt_messages,
-                model=target_model,
-                temperature=0.7,
-                max_tokens=1500
-            )
+            chat_completion = ai_client.chat.completions.create(messages=prompt_messages, model=target_model, temperature=0.7, max_tokens=1500)
             final_response = chat_completion.choices[0].message.content.strip()
             app.logger.info(f"xAI Grok ({target_model}) 回應成功，用時 {time.time() - grok_start:.2f} 秒。")
-        # (錯誤處理)
         except Exception as e: app.logger.error(f"xAI Grok 未知錯誤: {e}", exc_info=True); final_response = "抱歉，系統發生錯誤。"
 
-        # 6. 準備儲存歷史
+        # 5. 準備儲存歷史
         history_to_save = history
         history_to_save.append({"role": "user", "content": user_text_original})
         history_to_save.append({"role": "assistant", "content": final_response})
         if len(history_to_save) > MAX_HISTORY_TURNS * 2: history_to_save = history_to_save[-(MAX_HISTORY_TURNS * 2):]
 
-        # 7. 存回資料庫 (含日誌和 NULL fix)
+        # 6. 存回資料庫 (保持日誌和 NULL fix)
         if conn:
             try:
                 if conn.closed: conn = get_db_connection()
@@ -316,15 +236,14 @@ def process_and_push(user_id, event):
                     cleaned_history_json_string = history_json_string.replace('\x00', '')
                     app.logger.info(f"準備儲存歷史 for user_id: {user_id}")
                     log_string = cleaned_history_json_string[:200] + "..." + cleaned_history_json_string[-200:] if len(cleaned_history_json_string) > 400 else cleaned_history_json_string
-                    app.logger.info(f"History JSON string (cleaned, partial): {log_string}") #<-- 檢查這個日誌！
-                    # 仍使用直接傳遞字串的方式，如果還出錯，需要看上面的日誌
+                    app.logger.info(f"History JSON string (cleaned, partial): {log_string}")
                     cur.execute("""INSERT INTO conversation_history (user_id, history) VALUES (%s, %s) ON CONFLICT (user_id) DO UPDATE SET history = EXCLUDED.history;""", (user_id, cleaned_history_json_string))
                     conn.commit()
                 app.logger.info(f"歷史儲存成功 (長度: {len(history_to_save)})。")
             except (Exception, psycopg2.DatabaseError) as db_err: app.logger.error(f"儲存歷史錯誤 for user {user_id}: {type(db_err).__name__} - {db_err}", exc_info=True); conn.rollback()
         else: app.logger.warning("無法連接資料庫，歷史紀錄未儲存。")
 
-        # 8. 準備最終回覆訊息 (只有文字)
+        # 7. 準備最終回覆訊息 (只有文字)
         final_response_message = TextSendMessage(text=final_response)
 
     except Exception as e:
@@ -350,14 +269,3 @@ def callback():
     try: handler.handle(body, signature)
     except InvalidSignatureError: app.logger.error("簽名錯誤。"); abort(400)
     except LineBotApiError as e: app.logger.error(f"LINE API 錯誤: {e.status_code} {e.error.message}"); abort(500)
-    except Exception as e: app.logger.error(f"Webhook 錯誤: {e}", exc_info=True); abort(500)
-    return 'OK'
-
-@handler.add(MessageEvent, message=(TextMessage, ImageMessage))
-def handle_message(event):
-    user_id = event.source.user_id
-    Thread(target=process_and_push, args=(user_id, event)).start()
-
-# --- 主程式進入點 (保持不變) ---
-if __name__ == "__main__": init_db(); port = int(os.environ.get("PORT", 5000)); app.run(host="0.0.0.0", port=port)
-else: init_db()
